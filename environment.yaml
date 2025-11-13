@@ -1,4 +1,4 @@
-name: equinv
+name: veda
 channels:
   - defaults
 dependencies:
