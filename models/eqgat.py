@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
 
-import semlaflow.util.functional as smolF
-from semlaflow.models.semla import CoordNorm, MolecularGenerator
+from util import functional as smolF
+from models.semla import CoordNorm, MolecularGenerator
 
 
 def adj_to_attn_mask(adj_matrix, pos_inf=False):

@@ -4,7 +4,7 @@ import argparse
 import pickle
 from pathlib import Path
 
-from semlaflow.util.molrepr import GeometricMol, GeometricMolBatch
+from util.molrepr import GeometricMol, GeometricMolBatch
 
 DEFAULT_RAW_DATA_FOLDER = "raw"
 DEFUALT_SAVE_DATA_FOLDER = "smol"

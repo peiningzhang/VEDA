@@ -5,7 +5,7 @@ import threading
 from abc import ABC, abstractmethod
 from typing import Optional, Union
 
-import semlaflow.util.functional as smolF
+from util import functional as smolF
 
 indicesT = Union[list[int], list[list[int]]]
 

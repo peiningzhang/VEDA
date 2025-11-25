@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from semlaflow.util.molrepr import GeometricMolBatch
+from util.molrepr import GeometricMolBatch
 
 # *** Util functions ***
 

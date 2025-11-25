@@ -6,8 +6,8 @@ import torch
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.transform import Rotation
 
-import semlaflow.util.functional as smolF
-from semlaflow.util.molrepr import GeometricMol, GeometricMolBatch, SmolBatch, SmolMol
+from util import functional as smolF
+from util.molrepr import GeometricMol, GeometricMolBatch, SmolBatch, SmolMol
 import functools
 
 SCALE_OT_FACTOR = 0.2
@@ -50,13 +50,10 @@ class GeometricNoiseSampler(NoiseSampler):
         coord_noise: str = "gaussian",
         type_noise: str = "uniform-sample",
         bond_noise: str = "uniform-sample",
-        charge_noise: str = "uniform-sample",
         scale_ot: bool = False,
         zero_com: bool = True,
         type_mask_index: Optional[int] = None,
         bond_mask_index: Optional[int] = None,
-        charge_mask_index: Optional[int] = None,
-        include_charge: bool = False,
     ):
         if coord_noise != "gaussian":
             raise NotImplementedError(f"Coord noise {coord_noise} is not supported.")
@@ -69,13 +66,10 @@ class GeometricNoiseSampler(NoiseSampler):
         self.coord_noise = coord_noise
         self.type_noise = type_noise
         self.bond_noise = bond_noise
-        self.charge_noise = charge_noise
         self.scale_ot = scale_ot
         self.zero_com = zero_com
         self.type_mask_index = type_mask_index
         self.bond_mask_index = bond_mask_index
-        self.charge_mask_index = charge_mask_index,
-        self.include_charge = include_charge
 
         self.coord_dist = torch.distributions.Normal(torch.tensor(0.0), torch.tensor(1.0))
         self.atomic_dirichlet = torch.distributions.Dirichlet(torch.ones(vocab_size))
@@ -87,7 +81,6 @@ class GeometricNoiseSampler(NoiseSampler):
             "coord-noise": self.coord_noise,
             "type-noise": self.type_noise,
             "bond-noise": self.bond_noise,
-            "charge-noise": self.charge_noise,
             "noise-scale-ot": self.scale_ot,
             "zero-com": self.zero_com,
         }
@@ -134,19 +127,6 @@ class GeometricNoiseSampler(NoiseSampler):
             bond_types = torch.randint(0, self.n_bond_types, size=(batch_size, n_bonds))
             bond_types = torch.stack([smolF.one_hot_encode_tensor(bt, self.n_bond_types) 
                                     for bt in bond_types])
-        
-        # 批量采样电荷
-        charges = None
-        if self.include_charge:
-            if self.type_noise == "dirichlet":
-                charges = self.atomic_dirichlet.sample((batch_size, n_atoms))
-            elif self.type_noise == "uniform-dist":
-                charges = torch.ones((batch_size, n_atoms, 7)) / 7
-            elif self.type_noise == "mask":
-                charges = torch.zeros((batch_size, n_atoms, 7), dtype=torch.float32)
-                charges[:, :, self.type_mask_index] = 1.0
-            elif self.type_noise == "uniform-sample":
-                charges = torch.randint(0, 7, (batch_size, n_atoms))
         
         # 创建分子列表
         mols = []
@@ -203,27 +183,8 @@ class GeometricNoiseSampler(NoiseSampler):
             bond_types = torch.randint(0, self.n_bond_types, size=(n_bonds,))
             bond_types = smolF.one_hot_encode_tensor(bond_types, self.n_bond_types)
 
-        if self.include_charge:
-            # Sample atom types
-            if self.type_noise == "dirichlet":
-                charges = self.atomic_dirichlet.sample((n_atoms,))
-
-            elif self.type_noise == "uniform-dist":
-                charges = torch.ones((n_atoms, 7)) / self.vocab_size
-
-            elif self.type_noise == "mask":
-                charges = torch.zeros((n_atoms, self.vocab_size), dtype=torch.float32)
-                charges[:, self.type_mask_index] = 1.0
-
-            elif self.type_noise == "uniform-sample":
-                charges = torch.randint(0, 7, (n_atoms,))
-
-
         # Create smol mol object
-        if not self.include_charge:
-            mol = GeometricMol(coords, atomics, bond_indices=bond_indices, bond_types=bond_types)
-        else:
-            mol = GeometricMol(coords, atomics, bond_indices=bond_indices, bond_types=bond_types, charges = charges)
+        mol = GeometricMol(coords, atomics, bond_indices=bond_indices, bond_types=bond_types)
         if self.zero_com:
             mol = mol.zero_com()
 
@@ -248,7 +209,6 @@ class GeometricInterpolant(Interpolant):
         coord_interpolation: str = "linear",
         type_interpolation: str = "unmask",
         bond_interpolation: str = "unmask",
-        charge_interpolation: str = "unmask",
         coord_noise_std: float = 0.0,
         type_dist_temp: float = 1.0,
         equivariant_ot: bool = False,
@@ -258,7 +218,6 @@ class GeometricInterpolant(Interpolant):
         fixed_time: Optional[float] = None,
         mask_times_factor: float = 1,
         mask_rate_strategy: str = None,
-        include_charge: bool = False,
     ):
 
         if coord_interpolation != "linear":
@@ -283,7 +242,6 @@ class GeometricInterpolant(Interpolant):
         self.fixed_time = fixed_time
         self.mask_times_factor = mask_times_factor
         self.mask_rate_strategy = mask_rate_strategy
-        self.include_charge = include_charge
         # self.time_dist = torch.distributions.Beta(time_alpha, time_beta)
         if self.fixed_time is None:
             self.time_dist = torch.distributions.LogNormal(self.time_mean, self.time_sigma)
@@ -428,21 +386,5 @@ class GeometricInterpolant(Interpolant):
         bond_indices = torch.ones((from_mol.seq_length, from_mol.seq_length)).nonzero()
         bond_types = interp_adj[bond_indices[:, 0], bond_indices[:, 1]]
 
-        if self.include_charge:
-            if self.type_interpolation == "unmask":
-                if self.mask_rate_strategy == 'edm':
-                    mask_rate = (np.log(t) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
-                else:
-                    mask_rate = 1 - 1/(1+t)
-                to_charges = to_mol.charges
-                from_charges = from_mol.charges
-                charge_mask = torch.rand_like(from_charges.float()) < mask_rate
-                to_charges[charge_mask] = from_charges[charge_mask]
-                charges = to_charges
-
-
-        if not self.include_charge:
-            interp_mol = GeometricMol(coords, atomics, bond_indices=bond_indices, bond_types=bond_types)
-        else:
-            interp_mol = GeometricMol(coords, atomics, bond_indices=bond_indices, bond_types=bond_types, charges = charges)
+        interp_mol = GeometricMol(coords, atomics, bond_indices=bond_indices, bond_types=bond_types)
         return interp_mol

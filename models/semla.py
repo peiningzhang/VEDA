@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 
-import semlaflow.util.functional as smolF
+from util import functional as smolF
 
 
 def adj_to_attn_mask(adj_matrix, pos_inf=False):

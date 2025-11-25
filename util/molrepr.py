@@ -14,9 +14,9 @@ from rdkit import Chem
 from scipy.spatial.transform import Rotation
 from typing_extensions import Self
 
-import semlaflow.util.functional as smolF
-import semlaflow.util.rdkit as smolRD
-from semlaflow.util.tokeniser import Vocabulary
+from util import functional as smolF
+from util import rdkit as smolRD
+from util.tokeniser import Vocabulary
 
 # Type aliases
 _T = torch.Tensor

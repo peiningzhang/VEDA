@@ -5,8 +5,8 @@ with the original version of the model.
 
 import torch
 
-import semlaflow.util.functional as smolF
-from semlaflow.models.semla import MolecularGenerator
+from util import functional as smolF
+from models.semla import MolecularGenerator
 
 
 class VanillaEgnnLayer(torch.nn.Module):

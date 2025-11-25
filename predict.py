@@ -14,14 +14,13 @@ import lightning as L
 import torch
 from rdkit import Chem
 
-import semlaflow.scriptutil as util
-from semlaflow.data.datamodules import GeometricInterpolantDM
-from semlaflow.data.datasets import GeometricDataset
-from semlaflow.data.interpolate import GeometricInterpolant, GeometricNoiseSampler
-# from semlaflow.models.fm import Integrator, MolecularCFM
-from semlaflow.models.temp_fm import Integrator, MolecularCFM
-from semlaflow.models.semla import EquiInvDynamics, SemlaGenerator
-from semlaflow.util.molrepr import GeometricMolBatch
+import scriptutil as util
+from data.datamodules import GeometricInterpolantDM
+from data.datasets import GeometricDataset
+from data.interpolate import GeometricInterpolant, GeometricNoiseSampler
+from models.fm import Integrator, MolecularCFM
+from models.semla import EquiInvDynamics, SemlaGenerator
+from util.molrepr import GeometricMolBatch
 
 # Default script arguments
 DEFAULT_SAVE_FILE = "predictions.smol"
@@ -60,75 +59,40 @@ def load_model(args, vocab, dm):
     if hparams.get("architecture") is None:
         hparams["architecture"] = "semla"
 
-    if hparams["architecture"] == "semla":
-        dynamics = EquiInvDynamics(
-            hparams["d_model"],
-            hparams["d_message"],
-            hparams["n_coord_sets"],
-            hparams["n_layers"],
-            n_attn_heads=hparams["n_attn_heads"],
-            d_message_hidden=hparams["d_message_hidden"],
-            d_edge=hparams["d_edge"],
-            self_cond=hparams["self_cond"],
-            coord_norm=hparams["coord_norm"],
-        )
-        egnn_gen = SemlaGenerator(
-            hparams["d_model"],
-            dynamics,
-            vocab.size,
-            hparams["n_atom_feats"],
-            d_edge=hparams["d_edge"],
-            n_edge_types=n_bond_types,
-            self_cond=hparams["self_cond"],
-            size_emb=hparams["size_emb"],
-            max_atoms=hparams["max_atoms"],
-        )
+    if hparams["architecture"] != "semla":
+        raise ValueError("Only the Semla architecture is supported; use checkpoints trained with --arch=semla.")
 
-    elif hparams["architecture"] == "eqgat":
-        from semlaflow.models.eqgat import EqgatGenerator
-
-        egnn_gen = EqgatGenerator(
-            hparams["d_model"],
-            hparams["n_layers"],
-            hparams["n_equi_feats"],
-            vocab.size,
-            hparams["n_atom_feats"],
-            hparams["d_edge"],
-            hparams["n_edge_types"]
-        )
-
-    elif hparams["architecture"] == "egnn":
-        from semlaflow.models.egnn import VanillaEgnnGenerator
-
-        n_layers = args.n_layers if hparams.get("n_layers") is None else hparams["n_layers"]
-        if n_layers is None:
-            raise ValueError("No hparam for n_layers was saved, use script arg to provide n_layers")
-
-        egnn_gen = VanillaEgnnGenerator(
-            hparams["d_model"],
-            n_layers,
-            vocab.size,
-            hparams["n_atom_feats"],
-            d_edge=hparams["d_edge"],
-            n_edge_types=n_bond_types
-        )
-
-    else:
-        raise ValueError(f"Unknown architecture hyperparameter.")
+    dynamics = EquiInvDynamics(
+        hparams["d_model"],
+        hparams["d_message"],
+        hparams["n_coord_sets"],
+        hparams["n_layers"],
+        n_attn_heads=hparams["n_attn_heads"],
+        d_message_hidden=hparams["d_message_hidden"],
+        d_edge=hparams["d_edge"],
+        self_cond=hparams["self_cond"],
+        coord_norm=hparams["coord_norm"],
+    )
+    egnn_gen = SemlaGenerator(
+        hparams["d_model"],
+        dynamics,
+        vocab.size,
+        hparams["n_atom_feats"],
+        d_edge=hparams["d_edge"],
+        n_edge_types=n_bond_types,
+        self_cond=hparams["self_cond"],
+        size_emb=hparams["size_emb"],
+        max_atoms=hparams["max_atoms"],
+    )
 
     type_mask_index = (
         vocab.indices_from_tokens(["<MASK>"])[0] if hparams["train-type-interpolation"] == "unmask" else None
     )
     bond_mask_index = util.BOND_MASK_INDEX if hparams["train-bond-interpolation"] == "unmask" else None
-    if args.include_charge:
-        charge_sampling_strategy = hparams["integration-type-strategy"]
-    else:
-        charge_sampling_strategy = None
     integrator = Integrator(
         args.integration_steps,
         type_strategy=hparams["integration-type-strategy"],
         bond_strategy=hparams["integration-bond-strategy"],
-        charge_strategy=charge_sampling_strategy,
         coord_noise_std=args.coord_noise_std_dev,
         type_mask_index=type_mask_index,
         bond_mask_index=bond_mask_index,
@@ -140,8 +104,6 @@ def load_model(args, vocab, dm):
         mask_rate_strategy = args.mask_rate_strategy,
         max_sigma = args.max_sigma,
         min_sigma = args.min_sigma,
-        use_heun = args.use_heun,
-        include_charge=args.include_charge,
         first_term_coef=args.first_term_coef,
         adaptive_cat_noise_level=args.adaptive_cat_noise_level,
         sampler=args.sampler,
@@ -154,7 +116,6 @@ def load_model(args, vocab, dm):
         integrator=integrator,
         type_mask_index=type_mask_index,
         bond_mask_index=bond_mask_index,
-        include_charge=args.include_charge,
         sampling_strategy_factor=args.sampling_strategy_factor,
         low_confidence_remask=args.low_confidence_remask,
         **hparams,
@@ -307,7 +268,7 @@ def main(args):
     molecules, raw_outputs, stabilities = util.generate_molecules(model, dm, args.integration_steps, stabilities=True)
     print("Generation complete.")
     print(len(molecules))
-    import semlaflow.util.rdkit as smolRD
+    from util import rdkit as smolRD
 
     if args.save_per_mol_metrics:
         per_mol_metrics = list()
@@ -358,11 +319,9 @@ if __name__ == "__main__":
     parser.add_argument("--mask_times_factor", type=float, default=DEFAULT_MASK_TIMES_FACTOR)
     parser.add_argument("--mask_rate_strategy", type=str, default=DEFAULT_MASK_RATE_STRATEGY)
     parser.add_argument("--use_edm_mask_step", action="store_true")
-    parser.add_argument("--include_charge", action="store_true")    
     parser.add_argument("--first_term_coef", type=float, default=DEFAULT_FIRST_TERM_COEF)
     parser.add_argument("--adaptive_cat_noise_level", action="store_true")
     parser.add_argument("--no_novelty", action="store_true")
-    parser.add_argument("--use_heun", action="store_true")
     parser.add_argument("--sampler", type=str, default=DEFAULT_SAMPLER)
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     parser.add_argument("--sampling_strategy_factor", type=float, default=DEFAULT_SAMPLING_STRATEGY_FACTOR)

@@ -9,15 +9,15 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import LinearLR, OneCycleLR
 from torchmetrics import MetricCollection
 
-import semlaflow.util.functional as smolF
-import semlaflow.util.metrics as Metrics
-import semlaflow.util.rdkit as smolRD
+from util import functional as smolF
+from util import metrics as Metrics
+from util import rdkit as smolRD
 
-from semlaflow.models.semla import MolecularGenerator
-from semlaflow.util.molrepr import GeometricMol
-from semlaflow.util.tokeniser import Vocabulary
+from models.semla import MolecularGenerator
+from util.molrepr import GeometricMol
+from util.tokeniser import Vocabulary
 import math
-from semlaflow.util.molrepr import GeometricMolBatch
+from util.molrepr import GeometricMolBatch
 import random
 import time
 _T = torch.Tensor
@@ -30,7 +30,6 @@ class Integrator:
         coord_noise_std=0.0,
         type_strategy="mask",
         bond_strategy="mask",
-        charge_strategy="mask",
         cat_noise_level=0,
         type_mask_index=None,
         bond_mask_index=None,
@@ -42,8 +41,6 @@ class Integrator:
         mask_rate_strategy = None,
         max_sigma: float = 80,
         min_sigma: float = 0.001,
-        include_charge=False,
-        use_heun = False,
         first_term_coef = 1,
         adaptive_cat_noise_level = False,
         sampler = 'euler',
@@ -53,14 +50,11 @@ class Integrator:
         self._check_cat_sampling_strategy(type_strategy, type_mask_index, "type")
         self._check_cat_sampling_strategy(bond_strategy, bond_mask_index, "bond")
         assert type_strategy == bond_strategy, "type_strategy and bond_strategy must be the same"
-        if include_charge:
-            assert type_strategy == charge_strategy, "type_strategy and charge_strategy must be the same"
 
         self.steps = steps
         self.coord_noise_std = coord_noise_std
         self.type_strategy = type_strategy
         self.bond_strategy = bond_strategy
-        self.charge_strategy = charge_strategy
         self.cat_noise_level = cat_noise_level
         self.type_mask_index = type_mask_index
         self.bond_mask_index = bond_mask_index
@@ -72,8 +66,6 @@ class Integrator:
         self.mask_rate_strategy = mask_rate_strategy
         self.max_sigma = max_sigma
         self.min_sigma = min_sigma
-        self.include_charge = include_charge
-        self.use_heun = use_heun
         self.first_term_coef = first_term_coef
         self.adaptive_cat_noise_level = adaptive_cat_noise_level
         self.sampler = sampler
@@ -119,25 +111,17 @@ class Integrator:
                 _sample_step = self._uniform_sample_step
                 atomics, atomics_probs = self._uniform_sample_step(curr["atomics"], predicted["atomics"], t, step_size, self.mask_rate_strategy)
                 bonds, bonds_probs = self._uniform_sample_step(curr["bonds"], predicted["bonds"], t, step_size, self.mask_rate_strategy)
-                if self.include_charge:
-                    charges, charges_probs = self._uniform_sample_step(curr["charges"], predicted["charges"], t, step_size, self.mask_rate_strategy)
             elif self.type_strategy == 'mask':
                 atomics, atomics_probs = self._mask_sampling_step(curr["atomics"], predicted["atomics"], t, step_size, self.mask_rate_strategy, self.type_mask_index)
                 bonds, bonds_probs = self._mask_sampling_step(curr["bonds"], predicted["bonds"], t, step_size, self.mask_rate_strategy, self.bond_mask_index)
-                if self.include_charge:
-                    charges, charges_probs = self._mask_sampling_step(curr["charges"], predicted["charges"], t, step_size, self.mask_rate_strategy, self.charge_mask_index)
             else:
                 raise ValueError("Mask rate strategy not implemented")
         elif self.sampler == 'dfm-pc':
             atomics, atomics_probs = self._dfm_sampler_step(curr["atomics"], predicted["atomics"], t, step_size)
             bonds, bonds_probs = self._dfm_sampler_step(curr["bonds"], predicted["bonds"], t, step_size)
-            if self.include_charge:
-                charges, charges_probs = self._dfm_sampler_step(curr["charges"], predicted["charges"], t, step_size)
         elif self.sampler == 'dfm-poisson':
             atomics, atomics_probs = self._dfm_poisson_sampler_step(curr["atomics"], predicted["atomics"], t, step_size)
             bonds, bonds_probs = self._dfm_poisson_sampler_step(curr["bonds"], predicted["bonds"], t, step_size)
-            if self.include_charge:
-                charges, charges_probs = self._dfm_poisson_sampler_step(curr["charges"], predicted["charges"], t, step_size)
         else:
             raise ValueError("Mask rate strategy not implemented")
 
@@ -148,12 +132,8 @@ class Integrator:
             "bonds": bonds,
             "mask": curr["mask"]
         }
-        if self.include_charge:
-            updated["charges"] = charges
         updated["atomics_logits"] = atomics_probs.log()
         updated["bonds_logits"] = bonds_probs.log()
-        if self.include_charge:
-            updated["charges_logits"] = charges_probs.log()
         return updated
     def _mask_sampling_step(self, curr_dist, pred_dist, t, step_size, mask_rate_strategy, mask_index):
         n_categories = pred_dist.size(-1)
@@ -649,7 +629,6 @@ class MolecularCFM(L.LightningModule):
         max_sigma: Optional[float] = 80,
         min_sigma: Optional[float] = 0.001,
         rho: Optional[float] = 2.0,
-        include_charge: Optional[bool] = False,
         cat_skip_connection: Optional[str] = None,
         sigma_data: Optional[float] = 1.0,
         low_confidence_remask: Optional[bool] = False,
@@ -684,7 +663,6 @@ class MolecularCFM(L.LightningModule):
         self.coord_scale = coord_scale
         self.type_strategy = type_strategy
         self.bond_strategy = bond_strategy
-        self.charge_strategy = charge_strategy,
         self.type_loss_weight = type_loss_weight
         self.bond_loss_weight = bond_loss_weight
         self.charge_loss_weight = charge_loss_weight
@@ -707,7 +685,6 @@ class MolecularCFM(L.LightningModule):
         self.max_sigma = max_sigma
         self.min_sigma = min_sigma
         self.rho = rho
-        self.include_charge=include_charge
         self.cat_skip_connection = cat_skip_connection
         self.sigma_data = sigma_data
         self.use_cat_time_based_weight = use_cat_time_based_weight
@@ -904,11 +881,7 @@ class MolecularCFM(L.LightningModule):
 
             types = output_types * types_cat_coef["c_out"].view(-1, 1, 1) + types_logits * types_cat_coef["c_skip"].view(-1, 1, 1)
             bonds = output_bonds * bonds_cat_coef["c_out"].view(-1, 1, 1, 1) + bonds_logits * bonds_cat_coef["c_skip"].view(-1, 1, 1, 1)
-            if self.include_charge:
-                charges_cat_coef = self._prepare_cat_coef(t, n_dims=charges_logits.size(-1))
-                charges = output_charges * charges_cat_coef["c_out"].view(-1, 1, 1) + charges_logits * charges_cat_coef["c_skip"].view(-1, 1, 1)
-            else:
-                charges =  output_charges
+            charges = output_charges
         else:
             types = output_types
             bonds = output_bonds
@@ -951,7 +924,7 @@ class MolecularCFM(L.LightningModule):
             cat_logits = {
                 "atomics": temp_curr["atomics_logits"],
                 "bonds": temp_curr["bonds_logits"],
-                "charges": temp_curr["charges_logits"] if self.include_charge else None
+                "charges": None
             }
             
         return cat_logits
@@ -1392,10 +1365,7 @@ class MolecularCFM(L.LightningModule):
 
         type_loss = self._type_loss(data, interpolated, predicted)
         bond_loss = self._bond_loss(data, interpolated, predicted)
-        if self.include_charge:
-            charge_loss = self._charge_loss_logits(data, interpolated, predicted)
-        else:
-            charge_loss = self._charge_loss(data, predicted)
+        charge_loss = self._charge_loss(data, predicted)
         if self.dist_loss_weight > 0:
             # Compute distance squared loss
             dist_loss = self._dist_loss(data, predicted)
@@ -1512,26 +1482,6 @@ class MolecularCFM(L.LightningModule):
         n_atoms = mask.sum(dim=1) + eps
         charge_loss = (charge_loss * mask).sum(dim=1) / n_atoms
         return charge_loss
-    def _charge_loss_logits(self, data, interpolated, predicted, eps=1e-3):
-        pred_logits = predicted["charges"]
-        charges_dist = data["charges"]
-        mask = data["mask"].unsqueeze(2)
-        batch_size, num_atoms, _ = pred_logits.size()
-
-        charges = torch.argmax(charges_dist, dim=-1).flatten(0, 1)
-        charge_loss = F.cross_entropy(pred_logits.flatten(0, 1), charges, reduction="none")
-        charge_loss = charge_loss.unflatten(0, (batch_size, num_atoms)).unsqueeze(2)
-
-        n_atoms = mask.sum(dim=(1, 2)) + eps
-
-        # If we are training with masking, only compute the loss on masked types
-        if self.type_strategy == "mask":
-            masked_charges = torch.argmax(interpolated["atomics"], dim=-1) == self.type_mask_index
-            n_atoms = masked_charges.sum(dim=-1) + eps
-            charge_loss = charge_loss * masked_charges.float().unsqueeze(-1)
-
-        charge_loss = (charge_loss * mask).sum(dim=(1, 2)) / n_atoms
-        return charge_loss
     def _create_time_schedule(self, steps, strategy):
         """Create time schedule based on strategy"""
         if strategy == "log":
@@ -1612,10 +1562,7 @@ class MolecularCFM(L.LightningModule):
                     self.llada_discrete_step = False
                     self.low_confidence_remask = False
                 # New logic: if llada_discrete_step is True, use discrete features directly
-                if self.integrator.use_heun:
-                    curr, cat_logits = self._heun_step(curr, predicted, prior, times_hat, step_size, cat_logits, cond)
-                else:
-                    curr, cat_logits = self._euler_step(curr, predicted, prior, times_hat, step_size, cat_logits)
+                curr, cat_logits = self._euler_step(curr, predicted, prior, times_hat, step_size, cat_logits)
                 if self.llada_discrete_step:
                     
                     # Use predicted discrete features to replace curr, but keep coords unchanged
@@ -1707,8 +1654,6 @@ class MolecularCFM(L.LightningModule):
         if self.cat_skip_connection:
             cat_logits["atomics"] = curr["atomics_logits"]
             cat_logits["bonds"] = curr["bonds_logits"]
-            if self.include_charge:
-                cat_logits["charges"] = curr["charges_logits"]
         
         return curr, cat_logits
         
@@ -1785,18 +1730,5 @@ class MolecularCFM(L.LightningModule):
 
         # interp_mol = GeometricMol(coords, atomics, bond_indices=bond_indices, bond_types=bond_types)
 
-        if self.llada_discrete_step and self.low_confidence_remask and curr_probs is not None:
-            charges_confidence = torch.max(curr_probs["charges"], dim=-1)[0]
-            charge_mask = charges_confidence < torch.quantile(charges_confidence.flatten(), delta_mask_rate)
-        else:
-            charge_mask = torch.rand(from_mols["charges"].size(0), from_mols["charges"].size(1)) < delta_mask_rate
-        if self.include_charge:
-            to_charges = torch.argmax(to_mols["charges"], dim=-1)
-            from_charges = torch.argmax(from_mols["charges"], dim=-1)
-            to_charges[charge_mask] = from_charges[charge_mask]
-            charges = smolF.one_hot_encode_tensor(to_charges, to_mols["charges"].size(-1))
-
         interp_mol = {"coords": coords, "atomics": atomics, "bonds": interp_adj, "mask": to_mols["mask"]}
-        if self.include_charge:
-            interp_mol["charges"] = charges
         return interp_mol

@@ -7,12 +7,12 @@ import torch
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 
-import semlaflow.scriptutil as util
-from semlaflow.data.datamodules import GeometricInterpolantDM
-from semlaflow.data.datasets import GeometricDataset
-from semlaflow.data.interpolate import GeometricInterpolant, GeometricNoiseSampler
-from semlaflow.models.fm import Integrator, MolecularCFM
-from semlaflow.models.semla import EquiInvDynamics, SemlaGenerator
+import scriptutil as util
+from data.datamodules import GeometricInterpolantDM
+from data.datasets import GeometricDataset
+from data.interpolate import GeometricInterpolant, GeometricNoiseSampler
+from models.fm import Integrator, MolecularCFM
+from models.semla import EquiInvDynamics, SemlaGenerator
 import os
 import wandb
 
@@ -84,53 +84,32 @@ def build_model(args, dm, vocab):
     n_atom_feats = vocab.size + 1
     n_bond_types = util.get_n_bond_types(args.categorical_strategy)
 
-    if args.arch == "semla":
-        dynamics = EquiInvDynamics(
-            args.d_model,
-            args.d_message,
-            args.n_coord_sets,
-            args.n_layers,
-            n_attn_heads=args.n_attn_heads,
-            d_message_hidden=args.d_message_hidden,
-            d_edge=args.d_edge,
-            bond_refine=True,
-            self_cond=args.self_condition,
-            coord_norm=args.coord_norm,
-        )
-        egnn_gen = SemlaGenerator(
-            args.d_model,
-            dynamics,
-            vocab.size,
-            n_atom_feats,
-            d_edge=args.d_edge,
-            n_edge_types=n_bond_types,
-            self_cond=args.self_condition,
-            size_emb=args.size_emb,
-            max_atoms=args.max_atoms
-        )
+    if args.arch != "semla":
+        raise ValueError(f"Architecture '{args.arch}' is no longer supported; set --arch=semla to continue.")
 
-    elif args.arch == "eqgat":
-        from semlaflow.models.eqgat import EqgatGenerator
-
-        # Hardcode for now since we only need one model size
-        d_model_eqgat = 256
-        n_equi_feats_eqgat = 256
-        n_layers_eqgat = 12
-        d_edge_eqgat = 128
-
-        egnn_gen = EqgatGenerator(
-            d_model_eqgat, n_layers_eqgat, n_equi_feats_eqgat, vocab.size, n_atom_feats, d_edge_eqgat, n_bond_types
-        )
-
-    elif args.arch == "egnn":
-        from semlaflow.models.egnn import VanillaEgnnGenerator
-
-        egnn_gen = VanillaEgnnGenerator(
-            args.d_model, args.n_layers, vocab.size, n_atom_feats, d_edge=args.d_edge, n_edge_types=n_bond_types
-        )
-
-    else:
-        raise ValueError(f"Unknown architecture '{args.arch}'; known: `semla`, `eqgat` or `egnn`")
+    dynamics = EquiInvDynamics(
+        args.d_model,
+        args.d_message,
+        args.n_coord_sets,
+        args.n_layers,
+        n_attn_heads=args.n_attn_heads,
+        d_message_hidden=args.d_message_hidden,
+        d_edge=args.d_edge,
+        bond_refine=True,
+        self_cond=args.self_condition,
+        coord_norm=args.coord_norm,
+    )
+    egnn_gen = SemlaGenerator(
+        args.d_model,
+        dynamics,
+        vocab.size,
+        n_atom_feats,
+        d_edge=args.d_edge,
+        n_edge_types=n_bond_types,
+        self_cond=args.self_condition,
+        size_emb=args.size_emb,
+        max_atoms=args.max_atoms
+    )
 
     if args.dataset == "qm9":
         coord_scale = util.QM9_COORDS_STD_DEV
@@ -161,12 +140,6 @@ def build_model(args, dm, vocab):
             f"Interpolation '{args.categorical_strategy}' is not supported. "
             + "Supported are: `mask`, `uniform-sample` and `dirichlet`"
         )
-    if args.include_charge:
-        charge_sampling_strategy = sampling_strategy
-        charge_train_strategy = train_strategy
-    else:
-        charge_sampling_strategy = None
-        charge_train_strategy = None
     train_steps = util.calc_train_steps(dm, args.epochs, args.acc_batches)
     train_smiles = None if args.trial_run else [mols.str_id for mols in dm.train_dataset]
     val_smiles = None if args.trial_run else [mols.str_id for mols in dm.val_dataset]
@@ -177,7 +150,6 @@ def build_model(args, dm, vocab):
         args.num_inference_steps,
         type_strategy=sampling_strategy,
         bond_strategy=sampling_strategy,
-        charge_strategy=charge_sampling_strategy,
         coord_noise_std=args.coord_noise_std_dev,
         cat_noise_level=args.cat_sampling_noise_level,
         type_mask_index=type_mask_index,
@@ -189,7 +161,6 @@ def build_model(args, dm, vocab):
         mask_rate_strategy = args.mask_rate_strategy,
         max_sigma=args.max_sigma,
         min_sigma=args.min_sigma,
-        include_charge=args.include_charge,
     )
 
     fm_model = MolecularCFM(
@@ -200,7 +171,6 @@ def build_model(args, dm, vocab):
         coord_scale=coord_scale,
         type_strategy=train_strategy,
         bond_strategy=train_strategy,
-        charge_strategy=charge_train_strategy,
         type_loss_weight=args.type_loss_weight,
         bond_loss_weight=args.bond_loss_weight,
         charge_loss_weight=args.charge_loss_weight,
@@ -223,7 +193,6 @@ def build_model(args, dm, vocab):
         max_sigma=args.max_sigma,
         min_sigma=args.min_sigma,
         rho=args.rho,
-        include_charge=args.include_charge,
         cat_skip_connection=args.cat_skip_connection,
         use_cat_time_based_weight=args.use_cat_time_based_weight,
         use_x_pred = args.use_x_pred,
@@ -263,7 +232,6 @@ def build_dm(args, vocab):
 
     type_mask_index = None
     bond_mask_index = None
-    charge_mask_index = None
 
     if args.categorical_strategy == "mask":
         type_mask_index = vocab.indices_from_tokens(["<MASK>"])[0]
@@ -285,12 +253,6 @@ def build_dm(args, vocab):
             f"Interpolation '{args.categorical_strategy}' is not supported. "
             + "Supported are: `mask`, `uniform-sample` and `dirichlet`"
         )
-    if args.include_charge:
-        charge_categorical_interpolation = categorical_interpolation
-        charge_categorical_noise = categorical_noise
-    else:
-        charge_categorical_interpolation = None
-        charge_categorical_noise = None
     scale_ot = False
     batch_ot = False
     equivariant_ot = False
@@ -317,20 +279,16 @@ def build_dm(args, vocab):
         coord_noise="gaussian",
         type_noise=categorical_noise,
         bond_noise=categorical_noise,
-        charge_noise= charge_categorical_noise,
         scale_ot=scale_ot,
         zero_com=True,
         type_mask_index=type_mask_index,
         bond_mask_index=bond_mask_index,
-        charge_mask_index=charge_mask_index,
-        include_charge=args.include_charge,
     )
     train_interpolant = GeometricInterpolant(
         prior_sampler,
         coord_interpolation="linear",
         type_interpolation=categorical_interpolation,
         bond_interpolation=categorical_interpolation,
-        charge_interpolation=charge_categorical_interpolation,
         coord_noise_std=args.coord_noise_std_dev,
         type_dist_temp=args.type_dist_temp,
         equivariant_ot=equivariant_ot,
@@ -340,19 +298,16 @@ def build_dm(args, vocab):
         fixed_time=train_fixed_time,
         mask_times_factor = args.mask_times_factor,
         mask_rate_strategy = args.mask_rate_strategy,
-        include_charge=args.include_charge,
     )
     eval_interpolant = GeometricInterpolant(
         prior_sampler,
         coord_interpolation="linear",
         type_interpolation=categorical_interpolation,
         bond_interpolation=categorical_interpolation,
-        charge_interpolation=charge_categorical_interpolation,
         equivariant_ot=False,
         batch_ot=False,
         fixed_time=0.5,
         mask_times_factor = args.mask_times_factor,
-        include_charge=args.include_charge,
     )
 
     dm = GeometricInterpolantDM(
@@ -431,7 +386,7 @@ def main(args):
     print("Model complete.")
 
     # if args.ckpt_path is not None:
-    #     from semlaflow.evaluate import load_model
+    #     from evaluate import load_model
     #     print(f"Loading model...")
     #     model = load_model(args, vocab, dm)
     #     print("Model complete.")
@@ -491,7 +446,6 @@ if __name__ == "__main__":
     parser.add_argument("--test_run", action="store_true")    
     parser.add_argument("--mask_rate_strategy", type=str, default=DEFAULT_MASK_RATE_STRATEGY)
     parser.add_argument("--use_edm_mask_step", action="store_true")
-    parser.add_argument("--include_charge", action="store_true")
     parser.add_argument("--cat_skip_connection", type=str, default=DEFAULT_CAT_SKIP_CONNECTION)
     parser.add_argument("--use_cat_time_based_weight", action="store_true")
     parser.add_argument("--use_fm_coord_loss", action="store_true")
@@ -521,7 +475,6 @@ if __name__ == "__main__":
         trial_run=False,
         use_ema=True,
         self_condition=True,
-        include_charge=False,
         # compile_model=False,
         # mixed_precision=False,
         # distill=False

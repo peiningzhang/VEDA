@@ -5,10 +5,10 @@ import lightning as L
 import torch
 from torch.utils.data import DataLoader
 
-import semlaflow.util.functional as smolF
-import semlaflow.util.rdkit as smolRD
-from semlaflow.data.util import BucketBatchSampler
-from semlaflow.util.molrepr import GeometricMol, GeometricMolBatch
+from util import functional as smolF
+from util import rdkit as smolRD
+from data.util import BucketBatchSampler
+from util.molrepr import GeometricMol, GeometricMolBatch
 
 
 class SmolDM(L.LightningDataModule):

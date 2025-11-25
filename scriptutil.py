@@ -11,11 +11,11 @@ from rdkit import RDLogger
 from torchmetrics import MetricCollection
 from tqdm import tqdm
 
-import semlaflow.util.functional as smolF
-import semlaflow.util.metrics as Metrics
-import semlaflow.util.rdkit as smolRD
-from semlaflow.data.datasets import GeometricDataset
-from semlaflow.util.tokeniser import Vocabulary
+from util import functional as smolF
+from util import metrics as Metrics
+from util import rdkit as smolRD
+from data.datasets import GeometricDataset
+from util.tokeniser import Vocabulary
 
 # Declarations to be used in scripts
 QM9_COORDS_STD_DEV = 1.723299503326416
