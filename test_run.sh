@@ -49,7 +49,6 @@ CMD=(
   --data_path "$DATA_PATH"
   --dataset "$DATASET"
   --epochs "$EPOCHS"
-  --use_edm_mask_step
   --mask_rate_strategy edm
   --optimal_transport None
   --use_cat_time_based_weight

@@ -61,7 +61,7 @@ DEFAULT_TIME_SIGMA = 1.41
 DEFAULT_OPTIMAL_TRANSPORT = "equivariant"
 DEFAULT_MAX_SIGMA = 80
 DEFAULT_MIN_SIGMA = 0.001
-DEFAULT_RHO = 2.0
+DEFAULT_SAMPLING_SCHEDULER_FACTOR_RHO = 2.0
 
 
 
@@ -184,10 +184,9 @@ def build_model(args, dm, vocab):
         bond_mask_index=bond_mask_index,
         max_sigma=args.max_sigma,
         min_sigma=args.min_sigma,
-        rho=args.rho,
+        sampling_scheduler_factor_rho=args.sampling_scheduler_factor_rho,
         use_cat_time_based_weight=args.use_cat_time_based_weight,
-        use_x_pred = args.use_x_pred,
-        x_pred_type = args.x_pred_type,
+        x_pred_mode = args.x_pred_mode,
         **hparams,
     )
     return fm_model
@@ -435,6 +434,9 @@ if __name__ == "__main__":
     parser.add_argument("--use_cat_time_based_weight", action="store_true")
     parser.add_argument("--use_fm_coord_loss", action="store_true")
 
+    parser.add_argument("--x_pred_mode", type=str, default=None, choices=[None, 'constant', 'adaptive'],
+                       help="X-prediction mode: None (disabled), 'constant' (standard EDM), or 'adaptive' (with αt)")
+
     # Diffusion and sampling args
     parser.add_argument("--val_check_epochs", type=int, default=DEFAULT_VAL_CHECK_EPOCHS)
     parser.add_argument("--n_validation_mols", type=int, default=DEFAULT_N_VALIDATION_MOLS)
@@ -443,8 +445,9 @@ if __name__ == "__main__":
     parser.add_argument("--coord_noise_std_dev", type=float, default=DEFAULT_COORD_NOISE_STD_DEV)
     parser.add_argument("--type_dist_temp", type=float, default=DEFAULT_TYPE_DIST_TEMP)
     # --mask_times_factor removed - parameter no longer used
-    parser.add_argument("--use_x_pred", action="store_true")
-    parser.add_argument("--x_pred_type", type=str, default='v1')
+    # x_pred_mode: Merged from use_x_pred and x_pred_type
+    # Options: None (disabled), 'constant' (standard EDM preconditioning), 
+    # or 'adaptive' (with adaptive identity component subtraction using αt)
 
     # parser.add_argument("--time_alpha", type=float, default=DEFAULT_TIME_ALPHA)
     # parser.add_argument("--time_beta", type=float, default=DEFAULT_TIME_BETA)
@@ -453,7 +456,7 @@ if __name__ == "__main__":
     parser.add_argument("--optimal_transport", type=str, default=DEFAULT_OPTIMAL_TRANSPORT)
     parser.add_argument("--max_sigma", type=float, default=DEFAULT_MAX_SIGMA)
     parser.add_argument("--min_sigma", type=float, default=DEFAULT_MIN_SIGMA)
-    parser.add_argument("--rho", type=float, default=DEFAULT_RHO)
+    # --rho removed - merged into --sampling_scheduler_factor_rho
     
 
     parser.set_defaults(

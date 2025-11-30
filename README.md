@@ -66,7 +66,6 @@ python train.py \
   --data_path data/qm9/smol/ \
   --dataset qm9 \
   --epochs 300 \
-  --use_edm_mask_step \
   --mask_rate_strategy edm \
   --optimal_transport None \
   --val_check_epochs 10 \
@@ -85,7 +84,6 @@ For GEOM-DRUGS we keep the same EDM-inspired masking but shorten the validation 
 python train.py \
   --data_path data/geom-drugs/smol/ \
   --dataset geom-drugs \
-  --use_edm_mask_step \
   --mask_rate_strategy edm \
   --optimal_transport None \
   --use_cat_time_based_weight \

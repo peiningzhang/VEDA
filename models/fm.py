@@ -107,11 +107,8 @@ class Integrator:
             else:
                 raise ValueError("Mask rate strategy not implemented")
         elif self.sampler == 'dfm-pc':
-            atomics, atomics_probs = self._dfm_sampler_step(curr["atomics"], predicted["atomics"], t, step_size)
-            bonds, bonds_probs = self._dfm_sampler_step(curr["bonds"], predicted["bonds"], t, step_size)
-        elif self.sampler == 'dfm-poisson':
-            atomics, atomics_probs = self._dfm_poisson_sampler_step(curr["atomics"], predicted["atomics"], t, step_size)
-            bonds, bonds_probs = self._dfm_poisson_sampler_step(curr["bonds"], predicted["bonds"], t, step_size)
+            atomics, atomics_probs = self._dfm_gat_sampler_step(curr["atomics"], predicted["atomics"], t, step_size)
+            bonds, bonds_probs = self._dfm_gat_sampler_step(curr["bonds"], predicted["bonds"], t, step_size)
         else:
             raise ValueError("Mask rate strategy not implemented")
 
@@ -183,15 +180,6 @@ class Integrator:
             mult = ((1 + (noise * (n_categories*np.log(self.max_sigma) - (n_categories - 1)*torch.log(times) - np.log(self.min_sigma)))) / (times)/(torch.log(times) - np.log(self.min_sigma)))
         else:
             raise ValueError("uniform Mask rate strategy not implemented")
-            # # Setup batched time tensor and noise tensor
-            # ones = [1] * (len(pred_dist.shape) - 1)
-            # times = t.view(-1, *ones).clamp(min=self.eps, max=1.0 - self.eps)
-            # noise = torch.zeros_like(times)
-            # noise[times + step_size < 1.0] = self.cat_noise_level
-
-            # mult = ((1 + noise + (( noise) * (n_categories - 1) * times)) / (1 - times))
-            # first_term = step_size * mult * pred_dist
-            # second_term = step_size * noise * pred_probs_curr
         
         
         first_term = step_size * mult * pred_dist
@@ -274,10 +262,13 @@ class Integrator:
         mask_rates = np.clip(mask_rates, self.eps, 1 - self.eps)
         return mask_rates
     
-    def _dfm_sampler_step(self, curr_dist, pred_dist, t, step_size):
+    def _dfm_gat_sampler_step(self, curr_dist, pred_dist, t, step_size):
         """
-        A Predictor-Corrector sampler step based on the "Discrete Flow Matching" paper.
+        A Predictor-Corrector sampler step based on Gat et al.'s "Discrete Flow Matching" paper.
         This function can be used as a drop-in replacement for `_uniform_sample_step`.
+        
+        Note: This method is from Gat et al.'s Discrete Flow Matching paper, distinct from 
+        Campbell et al.'s Discrete Flow Matching paper (which uses a different approach).
 
         Args:
             curr_dist (torch.Tensor): The current one-hot encoded state.
@@ -335,93 +326,6 @@ class Integrator:
         final_sample_one_hot = F.one_hot(samples_ids, num_classes=n_categories).float()
         
         return final_sample_one_hot, step_probs
-
-    def _dfm_poisson_sampler_step(self, curr_dist, pred_dist, t, step_size):
-        """
-        用 Poisson 跳跃模拟替换 Categorical 采样的 DFM predictor–corrector step。
-
-        Args:
-            curr_dist (torch.Tensor): 当前 one-hot 编码分布，shape = [B, L, C]
-            pred_dist (torch.Tensor): 模型对"干净"分布的预测概率，shape = [B, L, C]
-            t (torch.Tensor): 当前 time stamp（unused for Poisson）
-            step_size (float): Δt, 大于 0
-
-        Returns:
-            final_one_hot (torch.Tensor): 新的 one-hot 样本，shape = [B, L, C]
-            step_probs     (torch.Tensor): 过渡概率分布（归一化的 Poisson 计数），shape = [B, L, C]
-        """
-        
-        
-        
-        use_meta_prob = False
-        
-        if use_meta_prob:
-            n_categories = pred_dist.size(-1)
-        
-            # Convert from sigma time to normalized time following the reference logic
-            eta = 15
-            original_mask_rates, mask_rates, _ = self._compute_mask_rate_deltas(t, t-step_size)
-            t_normalized = 1 - original_mask_rates
-            # Calculate alpha_t and beta_t as in reference
-            alpha_t = eta * t_normalized**0.25 * (1-t_normalized)**0.25 + 1
-            beta_t = alpha_t - 1
-            
-            
-            # Calculate kappa terms
-            # kappa_t = t_normalized**2
-            # kappa_dot_t = 2 * t_normalized
-            kappa_t = t_normalized
-            kappa_dot_t = 1
-            kappa_t_safe = max(kappa_t, 1e-9)
-            one_minus_kappa_t_safe = max(1 - kappa_t, 1e-9)
-            
-            # Calculate scaling factors
-            scale_hat = kappa_dot_t / one_minus_kappa_t_safe
-            scale_tilde = kappa_dot_t / kappa_t_safe
-            
-            # print('t', t_normalized, 'alpha_t', alpha_t, 'scale_hat', scale_hat, 'scale_tilde', scale_tilde)
-            
-            # Calculate velocity components following reference logic
-            u_hat_t = scale_hat * (pred_dist - curr_dist)
-            
-            # Prior noise distribution (uniform)
-            prior_noise_dist = torch.full_like(pred_dist, 1.0 / n_categories)
-            u_tilde_t = scale_tilde * (curr_dist - prior_noise_dist)
-            
-            # Combine velocities
-            u_bar_t = (alpha_t * u_hat_t - beta_t * u_tilde_t)
-            
-            
-            t_delta = original_mask_rates - mask_rates
-
-            step_probs= curr_dist + t_delta * u_bar_t
-            step_probs = torch.clamp(step_probs, min=1e-9, max=1)
-            u_bar_t = torch.clamp(u_bar_t, min=1e-9, max=1)
-            pred_dist = u_bar_t
-
-        C = pred_dist.size(-1)
-
-        # 1) 将模型预测的概率视作"跳跃率"，乘以 Δt 得到 Poisson 参数
-        #    pred_dist 本身已归一化 (sum over C = 1)
-        original_mask_rates, mask_rates, _ = self._compute_mask_rate_deltas(t, t-step_size)
-        step_size = original_mask_rates - mask_rates
-        rate = pred_dist * step_size        # [B, L, C]
-
-        # 2) 对每个 batch、每个位置、每个类别分别采样 Poisson(rate)
-        counts = torch.poisson(rate)        # [B, L, C]
-
-        # 3) 选出"跳跃次数"最大的那个类别作为新的 token
-        #    idx shape = [B, L]
-        idx = torch.argmax(counts, dim=-1)
-
-        # 4) 构造 one-hot 输出，shape = [B, L, C]
-        final_one_hot = F.one_hot(idx, num_classes=C).float()
-
-        # 5) 将 Poisson 计数归一化，作为 transition probabilities
-        total = counts.sum(dim=-1, keepdim=True).clamp(min=1e-8)  # [B, L, 1]
-        step_probs = counts / total                              # [B, L, C]
-
-        return final_one_hot, step_probs
 
 class MolBuilder:
     def __init__(self, vocab, n_workers=16):
@@ -625,7 +529,7 @@ class MolecularCFM(L.LightningModule):
         distill: bool = False,
         lr_schedule: str = "constant",
         sampling_scheduler: str = "arcsin",
-        sampling_strategy_factor: Optional[float] = 2.0,
+        sampling_scheduler_factor_rho: Optional[float] = 2.0,
         warm_up_steps: Optional[int] = None,
         total_steps: Optional[int] = None,
         train_smiles: Optional[list[str]] = None,
@@ -634,11 +538,12 @@ class MolecularCFM(L.LightningModule):
         bond_mask_index: Optional[int] = None,
         max_sigma: Optional[float] = 80,
         min_sigma: Optional[float] = 0.001,
-        rho: Optional[float] = 2.0,
         sigma_data: Optional[float] = 1.0,
         low_confidence_remask: Optional[bool] = False,
-        use_x_pred: Optional[bool] = False,
-        x_pred_type: Optional[str] = 'v1',
+        # x_pred_mode: None (disabled), 'constant' (standard EDM preconditioning), 
+        # or 'adaptive' (with adaptive identity component subtraction)
+        # Merged from use_x_pred and x_pred_type parameters
+        x_pred_mode: Optional[str] = None,
         **kwargs
     ):
         super().__init__()
@@ -683,13 +588,15 @@ class MolecularCFM(L.LightningModule):
         self.bond_mask_index = bond_mask_index
         self.max_sigma = max_sigma
         self.min_sigma = min_sigma
-        self.rho = rho
+        # sampling_scheduler_factor_rho: Merged from sampling_strategy_factor and rho
+        # Controls the mixing between linear and arcsin time schedules
+        self.rho = sampling_scheduler_factor_rho
         self.sigma_data = sigma_data
         self.use_cat_time_based_weight = use_cat_time_based_weight
         self.soft_label = False
         self.use_fm_coord_loss = use_fm_coord_loss
-        self.use_x_pred = use_x_pred
-        self.x_pred_type = x_pred_type
+        # x_pred_mode: None (disabled), 'constant' (standard EDM), or 'adaptive' (with αt subtraction)
+        self.x_pred_mode = x_pred_mode
         builder = MolBuilder(vocab)
         if use_ema:
             avg_fn = torch.optim.swa_utils.get_ema_multi_avg_fn(0.999)
@@ -701,9 +608,8 @@ class MolecularCFM(L.LightningModule):
         self.integrator = integrator
         self.builder = builder
         self.ema_gen = ema_gen if use_ema else None
-        self.rho = sampling_strategy_factor
-        self.use_x_pred = use_x_pred
-        self.x_pred_type = x_pred_type
+        # rho already set above from sampling_scheduler_factor_rho
+        # x_pred_mode already set above
         if self.integrator.sampler == 'llada':
             self.use_CM_coord_step = False
             self.use_llada_discrete_step = True
@@ -725,13 +631,13 @@ class MolecularCFM(L.LightningModule):
             "distill": distill,
             "lr_schedule": lr_schedule,
             "sampling_strategy": sampling_scheduler,
+            "sampling_scheduler_factor_rho": sampling_scheduler_factor_rho,
             "use_ema": use_ema,
             "compile_model": compile_model,
             "warm_up_steps": warm_up_steps,
             "sigma_data": sigma_data,
             "use_fm_coord_loss": use_fm_coord_loss,
-            "use_x_pred": use_x_pred,
-            "x_pred_type": x_pred_type,
+            "x_pred_mode": x_pred_mode,
             **gen.hparams,
             **integrator.hparams,
             **kwargs
@@ -828,14 +734,22 @@ class MolecularCFM(L.LightningModule):
         else:
             net_out = model(input_coords, features, edge_feats=bonds, atom_mask=mask)
         output_coords, output_types, output_bonds, output_charges = net_out
-        if self.use_x_pred:
-            if self.x_pred_type == 'v1':
-                output_coords = output_coords - input_coords
-            elif self.x_pred_type == 'v2':
-                x_pred_coef = self.sigma_data*t/(self.sigma_data**2 + t**2)
-                output_coords = output_coords - x_pred_coef.view(-1, 1, 1)*input_coords
-            else:
-                raise ValueError(f"Unsupported x_pred_type: {self.x_pred_type}")
+        
+        # Apply x-prediction mode if enabled
+        # 'constant': Standard EDM preconditioning - subtract input coords directly
+        # 'adaptive': Adaptive identity component subtraction using αt = σd*t/(σd² + t²)
+        # This reduces residual correlation with input and aligns with network's inductive bias
+        if self.x_pred_mode == 'constant':
+            # Standard EDM: Dθ(xt; t) = cskip*xt + cout*(Fθ(cin*xt; cnoise) - cin*xt)
+            output_coords = output_coords - input_coords
+        elif self.x_pred_mode == 'adaptive':
+            # Adaptive: Dθ(xt; t) = cskip*xt + cout*(Fθ(cin*xt; cnoise) - αt*cin*xt)
+            # where αt = σd*t/(σd² + t²) is the optimal LMMSE coefficient
+            x_pred_coef = self.sigma_data*t/(self.sigma_data**2 + t**2)
+            output_coords = output_coords - x_pred_coef.view(-1, 1, 1)*input_coords
+        elif self.x_pred_mode is not None:
+            raise ValueError(f"Unsupported x_pred_mode: {self.x_pred_mode}. Must be None, 'constant', or 'adaptive'")
+        
         coords = output_coords*coef["c_out"].view(-1, 1, 1) + coords*coef["c_skip"].view(-1, 1, 1)
 
         return coords, output_types, output_bonds, output_charges

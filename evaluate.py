@@ -28,7 +28,7 @@ DEFAULT_MIN_SIGMA = 0.001
 # DEFAULT_MASK_TIMES_FACTOR removed - parameter no longer used
 DEFAULT_MASK_RATE_STRATEGY = 'log_uniform'
 DEFAULT_INCLUDE_CHARGE=True
-DEFAULT_SAMPLING_STRATEGY_FACTOR=2.0
+DEFAULT_SAMPLING_SCHEDULER_FACTOR_RHO = 2.0
 DEFAULT_SAMPLER = "euler"
 DEFAULT_LOW_CONFIDENCE_REMASK = None
 
@@ -100,7 +100,7 @@ def load_model(args, vocab, dm):
         integrator=integrator,
         type_mask_index=type_mask_index,
         bond_mask_index=bond_mask_index,
-        sampling_strategy_factor=args.sampling_strategy_factor,
+        sampling_scheduler_factor_rho=args.sampling_scheduler_factor_rho,
         low_confidence_remask=args.low_confidence_remask,
         **hparams,
     )
@@ -277,7 +277,8 @@ if __name__ == "__main__":
     parser.add_argument("--adaptive_cat_noise_level", action="store_true")
     parser.add_argument("--no_novelty", action="store_true")
     parser.add_argument("--sampler", type=str, default=DEFAULT_SAMPLER)
-    parser.add_argument("--sampling_strategy_factor", type=float, default=DEFAULT_SAMPLING_STRATEGY_FACTOR)
+    parser.add_argument("--sampling_scheduler_factor_rho", type=float, default=DEFAULT_SAMPLING_SCHEDULER_FACTOR_RHO,
+                       help="Mixing factor for arcsin time schedule (merged from sampling_strategy_factor and rho)")
     parser.add_argument("--low_confidence_remask", type=str, default=DEFAULT_LOW_CONFIDENCE_REMASK)
     args = parser.parse_args()
     main(args)
