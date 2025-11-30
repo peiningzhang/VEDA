@@ -36,15 +36,13 @@ class Integrator:
         eps=1e-8,
         prior_sampler = None,
         data_module = None,
-        mask_times_factor = 1,
-        use_edm_mask_step = False,
+        # Note: mask_times_factor parameter removed - was used to scale time for mask rate calculation
+        # but is no longer needed. Mask rate is now computed directly from time without scaling.
         mask_rate_strategy = None,
         max_sigma: float = 80,
         min_sigma: float = 0.001,
-        first_term_coef = 1,
         adaptive_cat_noise_level = False,
         sampler = 'euler',
-        temperature = 1.0,
     ):
 
         self._check_cat_sampling_strategy(type_strategy, type_mask_index, "type")
@@ -61,15 +59,12 @@ class Integrator:
         self.eps = eps
         self.prior_sampler = prior_sampler
         self.data_module = data_module
-        self.mask_times_factor = mask_times_factor
-        self.use_edm_mask_step = use_edm_mask_step
+        # mask_times_factor removed - see comment above
         self.mask_rate_strategy = mask_rate_strategy
         self.max_sigma = max_sigma
         self.min_sigma = min_sigma
-        self.first_term_coef = first_term_coef
         self.adaptive_cat_noise_level = adaptive_cat_noise_level
         self.sampler = sampler
-        self.temperature = temperature
     @property
     def hparams(self):
         return {
@@ -96,19 +91,14 @@ class Integrator:
         coord_velocity = (predicted["coords"] - curr["coords"]) / t.view(-1, 1, 1)
         coords = curr["coords"] + step_size * coord_velocity
         # *** Atom type update step ***
-        if self.mask_times_factor != 1:
-            t_plus1 = t-step_size
-            step_size = (t - t_plus1)*self.mask_times_factor
-            step_size = step_size[0].item()
-            t = t*self.mask_times_factor
+        # Note: mask_times_factor scaling removed - time is used directly without scaling
 
         if self.mask_rate_strategy in ['edm', 'log_uniform']:
-            if t[0].item() > (self.max_sigma-self.eps)*self.mask_times_factor:
+            if t[0].item() > (self.max_sigma-self.eps):
                 inf = (1/self.eps)
                 step_size += t[0].item()*inf
                 t = t*(inf+1)
             if self.type_strategy == 'uniform-sample':
-                _sample_step = self._uniform_sample_step
                 atomics, atomics_probs = self._uniform_sample_step(curr["atomics"], predicted["atomics"], t, step_size, self.mask_rate_strategy)
                 bonds, bonds_probs = self._uniform_sample_step(curr["bonds"], predicted["bonds"], t, step_size, self.mask_rate_strategy)
             elif self.type_strategy == 'mask':
@@ -200,11 +190,11 @@ class Integrator:
             # noise[times + step_size < 1.0] = self.cat_noise_level
 
             # mult = ((1 + noise + (( noise) * (n_categories - 1) * times)) / (1 - times))
-            # first_term = step_size * mult * pred_dist * self.first_term_coef
+            # first_term = step_size * mult * pred_dist
             # second_term = step_size * noise * pred_probs_curr
         
         
-        first_term = step_size * mult * pred_dist * self.first_term_coef
+        first_term = step_size * mult * pred_dist
         second_term = step_size * noise * pred_probs_curr
         step_probs = (first_term + second_term).clamp(max=1.0)
 
@@ -229,19 +219,40 @@ class Integrator:
         if strategy == "mask" and mask_index is None:
             raise ValueError(f"{name}_mask_index must be provided if using the mask sampling strategy.")
     def _compute_mask_rate_deltas(self, times, times_hat):
-        """Compute mask rate changes - adapted from _compute_mask_rates in training"""
+        """Compute mask rate changes - adapted from _compute_mask_rates in training
+        
+        Note on 'edm' strategy naming:
+        Although named 'edm', the formula mask_rate = t/(t+1) actually comes from 
+        Discrete Flow Matching (DFM) mask prior derivation:
+        
+        In DFM, mask prior is given as:
+            f(t) = Cat(δ(x₀), w_data, w_noise)
+        
+        Define weight ratio: t = w_noise / w_data
+        Then total weight: w_total = w_data + w_noise = w_data(1 + t)
+        
+        Mask rate (probability of selecting noise/mask) is:
+            mask_rate = w_noise / (w_data + w_noise)
+                     = w_noise / [w_data(1 + t)]
+                     = (t·w_data) / [(1 + t)·w_data]
+                     = t / (1 + t)
+        
+        This maps the weight ratio t ∈ [0, ∞) to mask_rate ∈ [0, 1):
+        - When t → 0 (low noise weight): mask_rate → 0 (mostly keep original data)
+        - When t → ∞ (high noise weight): mask_rate → 1 (mostly mask/noise)
+        """
         self.time_mean = np.log((self.min_sigma*self.max_sigma)**0.5)
         self.time_sigma = (np.log(self.max_sigma) - np.log(self.min_sigma))/8
         if self.mask_rate_strategy == 'log_uniform':
-            if self.mask_times_factor != 1:
-                raise RuntimeError("log_uniform strategy not supporting mask time factor")
+            # Note: mask_times_factor removed - log_uniform strategy now always uses unscaled time
             original_mask_rates = (np.log(times.cpu()) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
             mask_rates = (np.log(times_hat.cpu()) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
         elif self.mask_rate_strategy == 'edm':
-            updated_times = times * self.mask_times_factor
-            updated_times_hat = times_hat * self.mask_times_factor
-            original_mask_rates = updated_times / (updated_times + 1)
-            mask_rates = updated_times_hat / (updated_times_hat + 1)
+            # DFM mask rate formula: mask_rate = t / (t + 1)
+            # Maps sigma time t ∈ [0, ∞) to mask_rate ∈ [0, 1)
+            # Note: mask_times_factor removed - time is used directly without scaling
+            original_mask_rates = times / (times + 1)
+            mask_rates = times_hat / (times_hat + 1)
         else:
             raise ValueError("mask_rate_strategy not implemented")
         
@@ -251,13 +262,167 @@ class Integrator:
                 float(mask_rates[0].item()), 
                 float(delta_mask_rates[0].item()))
     def _compute_mask_rates(self, times):
-        """Compute mask rates based on strategy"""
+        """Compute mask rates based on strategy
+        
+        For 'edm' strategy: mask_rate = t/(t+1) from DFM mask prior derivation.
+        See _compute_mask_rate_deltas docstring for detailed explanation.
+        """
         if self.mask_rate_strategy == 'log_uniform':
             mask_rates = float((np.log(times.cpu()) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8))
-        else:  # 'edm' or None
+        else:  # 'edm' or None - uses DFM formula: mask_rate = t/(t+1)
             mask_rates = float((times/(times + 1))[0].item())
         mask_rates = np.clip(mask_rates, self.eps, 1 - self.eps)
         return mask_rates
+    
+    def _dfm_sampler_step(self, curr_dist, pred_dist, t, step_size):
+        """
+        A Predictor-Corrector sampler step based on the "Discrete Flow Matching" paper.
+        This function can be used as a drop-in replacement for `_uniform_sample_step`.
+
+        Args:
+            curr_dist (torch.Tensor): The current one-hot encoded state.
+            pred_dist (torch.Tensor): The model's prediction (probabilities) for the clean data, given `curr_dist` and `t`.
+            t (torch.Tensor): The current native time (sigma).
+            step_size (float): The size of the time step (t - t_next), always positive.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A tuple containing the new one-hot sample and the final transition probabilities.
+        """
+        n_categories = pred_dist.size(-1)
+        
+        # Convert from sigma time to normalized time following the reference logic
+        eta = self.cat_noise_level
+        original_mask_rates, mask_rates, _ = self._compute_mask_rate_deltas(t, t-step_size)
+        t_normalized = 1 - original_mask_rates
+        # Calculate alpha_t and beta_t as in reference
+        alpha_t = eta * t_normalized**0.25 * (1-t_normalized)**0.25 + 1
+        beta_t = alpha_t - 1
+        
+        
+        # Calculate kappa terms
+        # kappa_t = t_normalized**2
+        # kappa_dot_t = 2 * t_normalized
+        kappa_t = t_normalized
+        kappa_dot_t = 1
+        kappa_t_safe = max(kappa_t, 1e-9)
+        one_minus_kappa_t_safe = max(1 - kappa_t, 1e-9)
+        
+        # Calculate scaling factors
+        scale_hat = kappa_dot_t / one_minus_kappa_t_safe
+        scale_tilde = kappa_dot_t / kappa_t_safe
+        
+        # print('t', t_normalized, 'alpha_t', alpha_t, 'scale_hat', scale_hat, 'scale_tilde', scale_tilde)
+        
+        # Calculate velocity components following reference logic
+        u_hat_t = scale_hat * (pred_dist - curr_dist)
+        
+        # Prior noise distribution (uniform)
+        prior_noise_dist = torch.full_like(pred_dist, 1.0 / n_categories)
+        u_tilde_t = scale_tilde * (curr_dist - prior_noise_dist)
+        
+        # Combine velocities
+        u_bar_t = (alpha_t * u_hat_t - beta_t * u_tilde_t)
+        
+        
+        t_delta = original_mask_rates - mask_rates
+
+        step_probs= curr_dist + t_delta * u_bar_t
+        step_probs = torch.clamp(step_probs, min=1e-9, max=1)
+                
+        
+        # Sample from the transition probabilities
+        samples_ids = torch.distributions.Categorical(probs=step_probs).sample()
+        final_sample_one_hot = F.one_hot(samples_ids, num_classes=n_categories).float()
+        
+        return final_sample_one_hot, step_probs
+
+    def _dfm_poisson_sampler_step(self, curr_dist, pred_dist, t, step_size):
+        """
+        用 Poisson 跳跃模拟替换 Categorical 采样的 DFM predictor–corrector step。
+
+        Args:
+            curr_dist (torch.Tensor): 当前 one-hot 编码分布，shape = [B, L, C]
+            pred_dist (torch.Tensor): 模型对"干净"分布的预测概率，shape = [B, L, C]
+            t (torch.Tensor): 当前 time stamp（unused for Poisson）
+            step_size (float): Δt, 大于 0
+
+        Returns:
+            final_one_hot (torch.Tensor): 新的 one-hot 样本，shape = [B, L, C]
+            step_probs     (torch.Tensor): 过渡概率分布（归一化的 Poisson 计数），shape = [B, L, C]
+        """
+        
+        
+        
+        use_meta_prob = False
+        
+        if use_meta_prob:
+            n_categories = pred_dist.size(-1)
+        
+            # Convert from sigma time to normalized time following the reference logic
+            eta = 15
+            original_mask_rates, mask_rates, _ = self._compute_mask_rate_deltas(t, t-step_size)
+            t_normalized = 1 - original_mask_rates
+            # Calculate alpha_t and beta_t as in reference
+            alpha_t = eta * t_normalized**0.25 * (1-t_normalized)**0.25 + 1
+            beta_t = alpha_t - 1
+            
+            
+            # Calculate kappa terms
+            # kappa_t = t_normalized**2
+            # kappa_dot_t = 2 * t_normalized
+            kappa_t = t_normalized
+            kappa_dot_t = 1
+            kappa_t_safe = max(kappa_t, 1e-9)
+            one_minus_kappa_t_safe = max(1 - kappa_t, 1e-9)
+            
+            # Calculate scaling factors
+            scale_hat = kappa_dot_t / one_minus_kappa_t_safe
+            scale_tilde = kappa_dot_t / kappa_t_safe
+            
+            # print('t', t_normalized, 'alpha_t', alpha_t, 'scale_hat', scale_hat, 'scale_tilde', scale_tilde)
+            
+            # Calculate velocity components following reference logic
+            u_hat_t = scale_hat * (pred_dist - curr_dist)
+            
+            # Prior noise distribution (uniform)
+            prior_noise_dist = torch.full_like(pred_dist, 1.0 / n_categories)
+            u_tilde_t = scale_tilde * (curr_dist - prior_noise_dist)
+            
+            # Combine velocities
+            u_bar_t = (alpha_t * u_hat_t - beta_t * u_tilde_t)
+            
+            
+            t_delta = original_mask_rates - mask_rates
+
+            step_probs= curr_dist + t_delta * u_bar_t
+            step_probs = torch.clamp(step_probs, min=1e-9, max=1)
+            u_bar_t = torch.clamp(u_bar_t, min=1e-9, max=1)
+            pred_dist = u_bar_t
+
+        C = pred_dist.size(-1)
+
+        # 1) 将模型预测的概率视作"跳跃率"，乘以 Δt 得到 Poisson 参数
+        #    pred_dist 本身已归一化 (sum over C = 1)
+        original_mask_rates, mask_rates, _ = self._compute_mask_rate_deltas(t, t-step_size)
+        step_size = original_mask_rates - mask_rates
+        rate = pred_dist * step_size        # [B, L, C]
+
+        # 2) 对每个 batch、每个位置、每个类别分别采样 Poisson(rate)
+        counts = torch.poisson(rate)        # [B, L, C]
+
+        # 3) 选出"跳跃次数"最大的那个类别作为新的 token
+        #    idx shape = [B, L]
+        idx = torch.argmax(counts, dim=-1)
+
+        # 4) 构造 one-hot 输出，shape = [B, L, C]
+        final_one_hot = F.one_hot(idx, num_classes=C).float()
+
+        # 5) 将 Poisson 计数归一化，作为 transition probabilities
+        total = counts.sum(dim=-1, keepdim=True).clamp(min=1e-8)  # [B, L, 1]
+        step_probs = counts / total                              # [B, L, C]
+
+        return final_one_hot, step_probs
+
 class MolBuilder:
     def __init__(self, vocab, n_workers=16):
         self.vocab = vocab
@@ -437,158 +602,6 @@ class MolBuilder:
 # ******************************************** Lightning Flow Matching Models *****************************************
 # *********************************************************************************************************************
 
-
-    def _dfm_sampler_step(self, curr_dist, pred_dist, t, step_size):
-        """
-        A Predictor-Corrector sampler step based on the "Discrete Flow Matching" paper.
-        This function can be used as a drop-in replacement for `_uniform_sample_step`.
-
-        Args:
-            curr_dist (torch.Tensor): The current one-hot encoded state.
-            pred_dist (torch.Tensor): The model's prediction (probabilities) for the clean data, given `curr_dist` and `t`.
-            t (torch.Tensor): The current native time (sigma).
-            step_size (float): The size of the time step (t - t_next), always positive.
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: A tuple containing the new one-hot sample and the final transition probabilities.
-        """
-        n_categories = pred_dist.size(-1)
-        
-        # Convert from sigma time to normalized time following the reference logic
-        eta = self.cat_noise_level
-        original_mask_rates, mask_rates, _ = self._compute_mask_rate_deltas(t, t-step_size)
-        t_normalized = 1 - original_mask_rates
-        # Calculate alpha_t and beta_t as in reference
-        alpha_t = eta * t_normalized**0.25 * (1-t_normalized)**0.25 + 1
-        beta_t = alpha_t - 1
-        
-        
-        # Calculate kappa terms
-        # kappa_t = t_normalized**2
-        # kappa_dot_t = 2 * t_normalized
-        kappa_t = t_normalized
-        kappa_dot_t = 1
-        kappa_t_safe = max(kappa_t, 1e-9)
-        one_minus_kappa_t_safe = max(1 - kappa_t, 1e-9)
-        
-        # Calculate scaling factors
-        scale_hat = kappa_dot_t / one_minus_kappa_t_safe
-        scale_tilde = kappa_dot_t / kappa_t_safe
-        
-        # print('t', t_normalized, 'alpha_t', alpha_t, 'scale_hat', scale_hat, 'scale_tilde', scale_tilde)
-        
-        # Calculate velocity components following reference logic
-        u_hat_t = scale_hat * (pred_dist - curr_dist)
-        
-        # Prior noise distribution (uniform)
-        prior_noise_dist = torch.full_like(pred_dist, 1.0 / n_categories)
-        u_tilde_t = scale_tilde * (curr_dist - prior_noise_dist)
-        
-        # Combine velocities
-        u_bar_t = (alpha_t * u_hat_t - beta_t * u_tilde_t)
-        
-        
-        t_delta = original_mask_rates - mask_rates
-
-        step_probs= curr_dist + t_delta * u_bar_t
-        step_probs = torch.clamp(step_probs, min=1e-9, max=1)
-                
-        
-        # Sample from the transition probabilities
-        samples_ids = torch.distributions.Categorical(probs=step_probs).sample()
-        final_sample_one_hot = F.one_hot(samples_ids, num_classes=n_categories).float()
-        
-        return final_sample_one_hot, step_probs
-
-
-
-
-    def _dfm_poisson_sampler_step(self, curr_dist, pred_dist, t, step_size):
-        """
-        用 Poisson 跳跃模拟替换 Categorical 采样的 DFM predictor–corrector step。
-
-        Args:
-            curr_dist (torch.Tensor): 当前 one-hot 编码分布，shape = [B, L, C]
-            pred_dist (torch.Tensor): 模型对“干净”分布的预测概率，shape = [B, L, C]
-            t (torch.Tensor): 当前 time stamp（unused for Poisson）
-            step_size (float): Δt, 大于 0
-
-        Returns:
-            final_one_hot (torch.Tensor): 新的 one-hot 样本，shape = [B, L, C]
-            step_probs     (torch.Tensor): 过渡概率分布（归一化的 Poisson 计数），shape = [B, L, C]
-        """
-        
-        
-        
-        use_meta_prob = False
-        
-        if use_meta_prob:
-            n_categories = pred_dist.size(-1)
-        
-            # Convert from sigma time to normalized time following the reference logic
-            eta = 15
-            original_mask_rates, mask_rates, _ = self._compute_mask_rate_deltas(t, t-step_size)
-            t_normalized = 1 - original_mask_rates
-            # Calculate alpha_t and beta_t as in reference
-            alpha_t = eta * t_normalized**0.25 * (1-t_normalized)**0.25 + 1
-            beta_t = alpha_t - 1
-            
-            
-            # Calculate kappa terms
-            # kappa_t = t_normalized**2
-            # kappa_dot_t = 2 * t_normalized
-            kappa_t = t_normalized
-            kappa_dot_t = 1
-            kappa_t_safe = max(kappa_t, 1e-9)
-            one_minus_kappa_t_safe = max(1 - kappa_t, 1e-9)
-            
-            # Calculate scaling factors
-            scale_hat = kappa_dot_t / one_minus_kappa_t_safe
-            scale_tilde = kappa_dot_t / kappa_t_safe
-            
-            # print('t', t_normalized, 'alpha_t', alpha_t, 'scale_hat', scale_hat, 'scale_tilde', scale_tilde)
-            
-            # Calculate velocity components following reference logic
-            u_hat_t = scale_hat * (pred_dist - curr_dist)
-            
-            # Prior noise distribution (uniform)
-            prior_noise_dist = torch.full_like(pred_dist, 1.0 / n_categories)
-            u_tilde_t = scale_tilde * (curr_dist - prior_noise_dist)
-            
-            # Combine velocities
-            u_bar_t = (alpha_t * u_hat_t - beta_t * u_tilde_t)
-            
-            
-            t_delta = original_mask_rates - mask_rates
-
-            step_probs= curr_dist + t_delta * u_bar_t
-            step_probs = torch.clamp(step_probs, min=1e-9, max=1)
-            u_bar_t = torch.clamp(u_bar_t, min=1e-9, max=1)
-            pred_dist = u_bar_t
-
-        C = pred_dist.size(-1)
-
-        # 1) 将模型预测的概率视作“跳跃率”，乘以 Δt 得到 Poisson 参数
-        #    pred_dist 本身已归一化 (sum over C = 1)
-        original_mask_rates, mask_rates, _ = self._compute_mask_rate_deltas(t, t-step_size)
-        step_size = original_mask_rates - mask_rates
-        rate = pred_dist * step_size        # [B, L, C]
-
-        # 2) 对每个 batch、每个位置、每个类别分别采样 Poisson(rate)
-        counts = torch.poisson(rate)        # [B, L, C]
-
-        # 3) 选出“跳跃次数”最大的那个类别作为新的 token
-        #    idx shape = [B, L]
-        idx = torch.argmax(counts, dim=-1)
-
-        # 4) 构造 one-hot 输出，shape = [B, L, C]
-        final_one_hot = F.one_hot(idx, num_classes=C).float()
-
-        # 5) 将 Poisson 计数归一化，作为 transition probabilities
-        total = counts.sum(dim=-1, keepdim=True).clamp(min=1e-8)  # [B, L, 1]
-        step_probs = counts / total                              # [B, L, C]
-
-        return final_one_hot, step_probs
 class MolecularCFM(L.LightningModule):
     def __init__(
         self,
@@ -603,13 +616,6 @@ class MolecularCFM(L.LightningModule):
         type_loss_weight: float = 1.0,
         bond_loss_weight: float = 1.0,
         charge_loss_weight: float = 1.0,
-        use_dist_loss: bool = False,
-        dist_loss_weight: float = 1.0,  # New parameter
-        dist_threshold: float = 9,      # New parameter
-        dist_mode: str = 'soft_threshold', # New parameter
-        dist_strategy: str = 'constant',  # New parameter: 'constant' or 'linear'
-        max_dist_weight: float = 1.0,    # New parameter: maximum dist loss weight for linear strategy
-        min_coord_weight: float = 0.1,   # New parameter: minimum coord loss weight for linear strategy
         use_fm_coord_loss: bool = False,
         use_cat_time_based_weight: bool = False,
         pairwise_metrics: bool = True,
@@ -629,7 +635,6 @@ class MolecularCFM(L.LightningModule):
         max_sigma: Optional[float] = 80,
         min_sigma: Optional[float] = 0.001,
         rho: Optional[float] = 2.0,
-        cat_skip_connection: Optional[str] = None,
         sigma_data: Optional[float] = 1.0,
         low_confidence_remask: Optional[bool] = False,
         use_x_pred: Optional[bool] = False,
@@ -666,12 +671,6 @@ class MolecularCFM(L.LightningModule):
         self.type_loss_weight = type_loss_weight
         self.bond_loss_weight = bond_loss_weight
         self.charge_loss_weight = charge_loss_weight
-        self.dist_loss_weight = dist_loss_weight  # New attribute
-        self.dist_threshold = dist_threshold      # New attribute
-        self.dist_mode = dist_mode                # New attribute
-        self.dist_strategy = dist_strategy        # New attribute
-        self.max_dist_weight = max_dist_weight    # New attribute
-        self.min_coord_weight = min_coord_weight  # New attribute
         self.pairwise_metrics = pairwise_metrics
         self.compile_model = compile_model
         self.self_condition = self_condition
@@ -685,30 +684,13 @@ class MolecularCFM(L.LightningModule):
         self.max_sigma = max_sigma
         self.min_sigma = min_sigma
         self.rho = rho
-        self.cat_skip_connection = cat_skip_connection
         self.sigma_data = sigma_data
         self.use_cat_time_based_weight = use_cat_time_based_weight
-        if cat_skip_connection is not None and 'soft' in cat_skip_connection:
-            self.soft_label = True
-            if cat_skip_connection == 'v1_soft':
-                self.delta_star_base = 5
-                self.gamma = 5
-                self.delta_out = 5
-        else:
-            self.soft_label = False
+        self.soft_label = False
         self.use_fm_coord_loss = use_fm_coord_loss
         self.use_x_pred = use_x_pred
         self.x_pred_type = x_pred_type
         builder = MolBuilder(vocab)
-        if not use_dist_loss:
-            self.dist_loss_weight = 0.0
-            self.dist_threshold = -1.0
-            self.dist_mode = 'soft_threshold'
-            self.dist_strategy = 'constant'
-            self.max_dist_weight = 1.0
-            self.min_coord_weight = 0.1
-        else:
-            self.dist_loss_weight = 1
         if use_ema:
             avg_fn = torch.optim.swa_utils.get_ema_multi_avg_fn(0.999)
             ema_gen = torch.optim.swa_utils.AveragedModel(gen, multi_avg_fn=avg_fn)
@@ -746,7 +728,6 @@ class MolecularCFM(L.LightningModule):
             "use_ema": use_ema,
             "compile_model": compile_model,
             "warm_up_steps": warm_up_steps,
-            "cat_skip_connection": cat_skip_connection,
             "sigma_data": sigma_data,
             "use_fm_coord_loss": use_fm_coord_loss,
             "use_x_pred": use_x_pred,
@@ -803,7 +784,7 @@ class MolecularCFM(L.LightningModule):
 
         self._init_params()
 
-    def forward(self, batch, t, training=False, cond_batch=None, cat_logits=None):
+    def forward(self, batch, t, training=False, cond_batch=None):
         """Predict molecular coordinates and atom types
 
         Args:
@@ -821,20 +802,6 @@ class MolecularCFM(L.LightningModule):
         bonds = batch["bonds"]
         mask = batch["mask"]
         coef = self._prepare_coef(t)
-        
-        if self.dist_loss_weight > 0:
-            dist_square_coef = self._prepare_dist_square_coef(t)
-            if training:
-                epoch_percentage = self.trainer.current_epoch/self.trainer.max_epochs
-                coord_weight_factor, dist_weight_factor = self._get_coord_dist_weight(epoch_percentage)
-                coord_weight_factor, dist_weight_factor = coord_weight_factor/(coord_weight_factor+dist_weight_factor), dist_weight_factor/(coord_weight_factor+dist_weight_factor)
-                coef["c_out"] = coord_weight_factor*coef["c_out"] + dist_weight_factor*dist_square_coef["c_out"]
-                coef["c_skip"] = coord_weight_factor*coef["c_skip"] + dist_weight_factor*dist_square_coef["c_skip"]
-            else:
-                coef["c_out"] = dist_square_coef["c_out"]
-                coef["c_skip"] = dist_square_coef["c_skip"]
-                
-        
 
         input_coords = coef["c_in"].view(-1, 1, 1)*coords
         # print('input_coords Var',torch.var(input_coords[0]))
@@ -865,33 +832,15 @@ class MolecularCFM(L.LightningModule):
             if self.x_pred_type == 'v1':
                 output_coords = output_coords - input_coords
             elif self.x_pred_type == 'v2':
-                if self.dist_loss_weight > 0:
-                    x_pred_coef = self.sigma_data*((self.sigma_data**4 + t**4)-self.sigma_data**2)/(t*(self.sigma_data**2 + t**2)*(self.sigma_data**4 + t**4)**0.75)
-                else:
-                    x_pred_coef = self.sigma_data*t/(self.sigma_data**2 + t**2)
+                x_pred_coef = self.sigma_data*t/(self.sigma_data**2 + t**2)
                 output_coords = output_coords - x_pred_coef.view(-1, 1, 1)*input_coords
             else:
                 raise ValueError(f"Unsupported x_pred_type: {self.x_pred_type}")
         coords = output_coords*coef["c_out"].view(-1, 1, 1) + coords*coef["c_skip"].view(-1, 1, 1)
 
-        if self.cat_skip_connection is not None and cat_logits is not None:
-            types_logits, bonds_logits, charges_logits = cat_logits["atomics"], cat_logits["bonds"], cat_logits["charges"]
-            types_cat_coef = self._prepare_cat_coef(t, n_dims=types_logits.size(-1))
-            bonds_cat_coef = self._prepare_cat_coef(t, n_dims=bonds_logits.size(-1))
-
-            types = output_types * types_cat_coef["c_out"].view(-1, 1, 1) + types_logits * types_cat_coef["c_skip"].view(-1, 1, 1)
-            bonds = output_bonds * bonds_cat_coef["c_out"].view(-1, 1, 1, 1) + bonds_logits * bonds_cat_coef["c_skip"].view(-1, 1, 1, 1)
-            charges = output_charges
-        else:
-            types = output_types
-            bonds = output_bonds
-            charges = output_charges
-        return coords, types, bonds, charges
+        return coords, output_types, output_bonds, output_charges
     def training_step(self, batch, b_idx):
-        if self.hparams["shortcut_training"]:
-            return self._training_step_shortcut(batch, b_idx)
-        else:
-            return self._training_step(batch, b_idx)
+        return self._training_step(batch, b_idx)
     def _get_initial_cond_batch(self, interpolated):
         """Initialize conditioning batch with zeros"""
         return {
@@ -899,52 +848,12 @@ class MolecularCFM(L.LightningModule):
             "atomics": torch.zeros_like(interpolated["atomics"]),
             "bonds": torch.zeros_like(interpolated["bonds"])
         }
-    def _compute_v2_cat_logits(self, interpolated, times, cond_batch):
-        """Compute v2 categorical logits using integrator step"""
-        with torch.no_grad():
-            coords, type_logits, bond_logits, charge_logits = self(
-                interpolated, times, training=False, cond_batch=cond_batch
-            )
-            
-            predicted = {
-                "coords": coords,
-                "atomics": F.softmax(type_logits, dim=-1),
-                "bonds": F.softmax(bond_logits, dim=-1),
-                "charges": F.softmax(charge_logits, dim=-1),
-                "mask": interpolated["mask"]
-            }
-            
-            # Temporarily change strategy for integration step
-            original_strategy = self.integrator.mask_rate_strategy
-            self.integrator.mask_rate_strategy = 'log_uniform'
-            prior = interpolated
-            temp_curr = self.integrator.step(interpolated, predicted, prior, times, self.integrator.eps)
-            self.integrator.mask_rate_strategy = original_strategy
-            
-            cat_logits = {
-                "atomics": temp_curr["atomics_logits"],
-                "bonds": temp_curr["bonds_logits"],
-                "charges": None
-            }
-            
-        return cat_logits
-    
-    def _compute_simple_cat_logits(self, data, mask_rates):
-        """Compute simple categorical logits"""
-        return {
-            k: torch.log(data[k] * (1 - mask_rates) + 
-                        torch.ones_like(data[k]) / data[k].size(-1) * mask_rates)
-            for k in ["atomics", "bonds", "charges"]
-        }
-
-        
-        return np.clip(mask_rates, self.integrator.eps, 1 - self.integrator.eps)
-    def _generate_self_condition(self, interpolated, times, cond_batch, cat_logits):
+    def _generate_self_condition(self, interpolated, times, cond_batch):
         """Generate self conditioning batch"""
         with torch.no_grad():
             cond_coords, cond_types, cond_bonds, _ = self(
                 interpolated, times, training=True,
-                cond_batch=cond_batch, cat_logits=cat_logits
+                cond_batch=cond_batch
             )
             
             return {
@@ -957,31 +866,19 @@ class MolecularCFM(L.LightningModule):
         prior, data, interpolated, times = batch
         # data is the true data, interpolated is the noisy data, difference is computed between the predicted and the true data
 
-        cat_logits = None
         # If training with self conditioning, half the time generate a conditional batch by setting cond to zeros
         cond_batch = self._get_initial_cond_batch(interpolated) if self.self_condition else None
-        if self.cat_skip_connection is not None:
-            if torch.rand(1).item() > 0.5:
-                print('cat skip connection')
-                mask_rates = self.integrator._compute_mask_rates(times)
-                if 'v2' in self.cat_skip_connection:
-                    cat_logits = self._compute_v2_cat_logits(interpolated, times, cond_batch)
-                else: # skip connection but not using v2
-                    cat_logits = self._compute_simple_cat_logits(data, mask_rates)
-
-        # cond_batch = self._get_initial_cond_batch(interpolated) if self.self_condition else None
         # Apply self conditioning
         if self.self_condition and torch.rand(1).item() > 0.5:
             print('self condition')
-            cond_batch = self._generate_self_condition(interpolated, times, cond_batch, cat_logits)
+            cond_batch = self._generate_self_condition(interpolated, times, cond_batch)
 
         
         coords, types, bonds, charges = self(
             interpolated,
             times,
             training=True,
-            cond_batch=cond_batch,
-            cat_logits=cat_logits
+            cond_batch=cond_batch
         )
         predicted = {
             "coords": coords,
@@ -1010,137 +907,7 @@ class MolecularCFM(L.LightningModule):
         self.log("train-loss", loss, prog_bar=True, on_step=True, logger=True)
 
         return loss
-    def _slice_batch(self, batch, start_idx, end_idx):
-        sliced_data = {            
-            "coords": batch["coords"][start_idx:end_idx],
-            "atomics": batch["atomics"][start_idx:end_idx],
-            "bonds": batch["bonds"][start_idx:end_idx],
-            "charges": batch["charges"][start_idx:end_idx],
-            "mask": batch["mask"][start_idx:end_idx]
-        }
-        return sliced_data
-    def _training_step_shortcut(self, batch, b_idx):
-        batch_size = len(batch[0]['coords'])
-        prior, data, interpolated, times = batch
-        shortcut_prior = self._slice_batch(prior, 0, batch_size//4)
-        shortcut_data = self._slice_batch(data, 0, batch_size//4)
-        shortcut_interpolated = self._slice_batch(interpolated, 0, batch_size//4)
-        shortcut_times = times[:batch_size//4]
-        
-        original_data = self._slice_batch(data, batch_size//4, batch_size)
-        # if self.distill:
-            # return self._distill_training_step(batch)
 
-        cond_batch = None
-
-        # If training with self conditioning, half the time generate a conditional batch by setting cond to zeros
-        if self.self_condition:
-            cond_batch = {
-                "coords": torch.zeros_like(shortcut_interpolated["coords"]),
-                "atomics": torch.zeros_like(shortcut_interpolated["atomics"]),
-                "bonds": torch.zeros_like(shortcut_interpolated["bonds"])
-            }
-
-            if torch.rand(1).item() > 0.5:
-                with torch.no_grad():
-                    cond_coords, cond_types, cond_bonds, _ = self(
-                        shortcut_interpolated,
-                        shortcut_times,
-                        training=True,
-                        cond_batch=cond_batch
-                    )
-                    cond_batch = {
-                        "coords": cond_coords,
-                        "atomics": F.softmax(cond_types, dim=-1),
-                        "bonds": F.softmax(cond_bonds, dim=-1)
-                    }
-        curr = {k: v.clone() for k, v in shortcut_prior.items()} 
-        first_coords, first_type_logits, first_bond_logits, first_charge_logits = self(shortcut_interpolated, shortcut_times, training=True, cond_batch=cond_batch)
-        first_type_probs = F.softmax(first_type_logits, dim=-1)
-        first_bond_probs = F.softmax(first_bond_logits, dim=-1)
-        first_charge_probs = F.softmax(first_charge_logits, dim=-1)
-        cond_batch = {
-            "coords": first_coords,
-            "atomics": first_type_probs,
-            "bonds": first_bond_probs
-        }
-        predicted = {
-            "coords": first_coords,
-            "atomics": first_type_probs,
-            "bonds": first_bond_probs,
-            "charges": first_charge_probs,
-            "mask": curr["mask"]
-        }
-        import random
-        # d_list = [1/128, 1/64, 1/32, 1/16, 1/8, 1/4]
-        # d_list_2 = list()
-        # for d in d_list:
-        #     if max(shortcut_times).item() + d < 1:
-        #         d_list_2.append(d)
-        # step_size = random.choice(d_list_2)
-        upper_bounds = (1 - max(shortcut_times).item()) / 2
-        step_size = random.random()*upper_bounds
-        first_curr = self.integrator.step(curr, predicted, shortcut_prior, shortcut_times, step_size)
-        shortcut_times_plus_d = shortcut_times + step_size
-        
-        coords, type_logits, bond_logits, charge_logits = self(first_curr, shortcut_times_plus_d, training=True, cond_batch=cond_batch)
-        shortcut_data = {
-            "coords": (first_coords.detach()+coords.detach())/2,
-            "atomics": (first_type_logits.detach()+type_logits.detach())/2,
-            "bonds": (first_bond_logits.detach()+bond_logits.detach())/2,
-            "charges": (first_charge_logits.detach()+charge_logits.detach())/2,
-            "mask": first_curr["mask"]
-        }
-        #merge the true label and the self-consistency label
-        data = {
-            "coords": torch.cat((shortcut_data["coords"], original_data["coords"]), dim=0),
-            "atomics": torch.cat((shortcut_data["atomics"], original_data["atomics"]), dim=0),
-            "bonds": torch.cat((shortcut_data["bonds"], original_data["bonds"]), dim=0),
-            "charges": torch.cat((shortcut_data["charges"], original_data["charges"]), dim=0),
-            "mask": torch.cat((shortcut_data["mask"], original_data["mask"]), dim=0)
-        }
-        #the generation of predicted data
-        cond_batch = None
-
-        # If training with self conditioning, half the time generate a conditional batch by setting cond to zeros
-        if self.self_condition:
-            cond_batch = {
-                "coords": torch.zeros_like(interpolated["coords"]),
-                "atomics": torch.zeros_like(interpolated["atomics"]),
-                "bonds": torch.zeros_like(interpolated["bonds"])
-            }
-
-            if torch.rand(1).item() > 0.5:
-                with torch.no_grad():
-                    cond_coords, cond_types, cond_bonds, _ = self(
-                        interpolated,
-                        times,
-                        training=True,
-                        cond_batch=cond_batch
-                    )
-                    cond_batch = {
-                        "coords": cond_coords,
-                        "atomics": F.softmax(cond_types, dim=-1),
-                        "bonds": F.softmax(cond_bonds, dim=-1)
-                    }
-
-        coords, types, bonds, charges = self(interpolated, times, training=True, cond_batch=cond_batch)
-        predicted = {
-            "coords": coords,
-            "atomics": types,
-            "bonds": bonds,
-            "charges": charges
-        }
-
-        losses = self._loss(data, interpolated, predicted)
-        loss = sum(list(losses.values()))
-
-        for name, loss_val in losses.items():
-            self.log(f"train-{name}", loss_val, on_step=True, logger=True)
-
-        self.log("train-loss", loss, prog_bar=True, on_step=True, logger=True)
-
-        return loss
 
 
 
@@ -1169,7 +936,7 @@ class MolecularCFM(L.LightningModule):
     def on_validation_epoch_end(self):
         stability_metrics_results = self.stability_metrics.compute()
         gen_metrics_results = self.gen_metrics.compute()
-        pair_metrics_results = self.pair_metrics.compute() if self.pairwise_metrics else {}
+        pair_metrics_results = self.pair_metrics.compute() if (self.pairwise_metrics and hasattr(self, 'pair_metrics')) else {}
 
         metrics = {
             **stability_metrics_results,
@@ -1246,25 +1013,17 @@ class MolecularCFM(L.LightningModule):
             "c_in": c_in,
             "c_noise": c_noise
         }
-    def _prepare_dist_square_coef(self, t):
-        sigma_data = self.sigma_data
-        sigma = t
-        c_skip = sigma_data**2 / (sigma**4 + sigma_data**4)**0.5
-        c_out = sigma * sigma_data / (sigma**4 + sigma_data**4)**0.25
-        return {
-            "c_skip": c_skip,
-            "c_out": c_out
-        }
-        
         
     def _prepare_cat_coef(self, t, n_dims=None):
         if self.integrator.mask_rate_strategy == 'log_uniform':
-            if self.integrator.mask_times_factor != 1:
-                raise RuntimeError("log_uniform strategy not supporting mask time factor")
+            # Note: mask_times_factor removed - log_uniform strategy now always uses unscaled time
             mask_rate = (t.log() - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
         elif self.integrator.mask_rate_strategy == 'edm' or self.integrator.mask_rate_strategy is None:
-            updated_t = t*self.integrator.mask_times_factor
-            mask_rate = (updated_t)/(updated_t + 1)
+            # DFM mask rate formula: mask_rate = t/(t+1)
+            # Derived from DFM mask prior: mask_rate = w_noise/(w_data + w_noise) = t/(1+t)
+            # where t = w_noise/w_data is the weight ratio
+            # Note: mask_times_factor removed - time is used directly without scaling
+            mask_rate = t / (t + 1)
         mask_rate = mask_rate.clamp(min=self.integrator.eps, max=1-self.integrator.eps)
         if self.soft_label:
             C = self.delta_out
@@ -1282,76 +1041,6 @@ class MolecularCFM(L.LightningModule):
         }
     def _compile_model(self, model):
         return torch.compile(model, dynamic=False, fullgraph=True, mode="reduce-overhead")
-    def compute_distance_square_matrix(self, coords):
-        """
-        Computes the pairwise distance matrix for each batch.
-        coords: Tensor of shape (batch_size, node_num, 3)
-        
-        Returns:
-        dist_matrix: Tensor of shape (batch_size, node_num, node_num)
-        """
-        diff = coords.unsqueeze(2) - coords.unsqueeze(1)  # Shape: (batch_size, node_num, node_num, 3)
-        # Sum squared differences along the last dimension (avoid sqrt)
-        dist_matrix = (diff ** 2).sum(dim=-1)  # Shape: (batch_size, node_num, node_num)
-        return dist_matrix
-
-    def compute_distance_square_error(self, pred_coords, target_coords, node_mask, threshold=-1, mode='soft_threshold'):
-        """Computes distance error, i.e. the difference between the predicted and target distances matrix"""
-        assert pred_coords.size() == target_coords.size()
-        
-        dist_sq_matrix_pred = self.compute_distance_square_matrix(pred_coords)
-        dist_sq_matrix_target = self.compute_distance_square_matrix(target_coords)
-        
-        if threshold > 0:
-            if mode == 'hard_threshold':
-                dist_matrix_target_weight = (dist_sq_matrix_target * self.coord_scale**2) < threshold
-            elif mode == 'soft_threshold':
-                dist_matrix_target_weight = 1 - torch.sigmoid((dist_sq_matrix_target**0.5 * self.coord_scale) / threshold**0.5)
-            # pair_mask = node_mask.unsqueeze(1) * node_mask.unsqueeze(2)
-            # dist_matrix_target_weight = dist_matrix_target_weight * pair_mask
-            dist_sq_matrix_pred = dist_sq_matrix_pred * dist_matrix_target_weight.detach()
-            dist_sq_matrix_target = dist_sq_matrix_target * dist_matrix_target_weight.detach()
-        
-        # Compute Frobenius norm of the difference
-        error = torch.norm(dist_sq_matrix_pred - dist_sq_matrix_target, dim=(1, 2))
-        # totol_weight = dist_matrix_target_weight.sum(dim=(1, 2)).clamp(min=1)
-        # error = error / totol_weight
-        
-        # Normalize by number of valid atom pairs
-        n_atoms = node_mask.sum(dim=1)  # Shape: (batch_size,)
-        n_pairs = n_atoms * n_atoms     # Total pairs per batch
-        error = error / n_pairs
-        
-        return error
-
-    def _dist_loss(self, data, predicted, eps=1e-3):
-        """Compute distance squared loss between predicted and target coordinates"""
-        pred_coords = predicted["coords"]
-        target_coords = data["coords"]
-        mask = data["mask"]  # Shape: (batch_size, num_atoms)
-        
-        # Compute distance squared error
-        dist_error = self.compute_distance_square_error(
-            pred_coords, 
-            target_coords, 
-            mask, 
-            threshold=self.dist_threshold, 
-            mode=self.dist_mode
-        )
-        
-        return dist_error
-    def _get_coord_dist_weight(self, epoch_percentage=None):
-        if epoch_percentage is None:
-            return 1, 0
-        else:
-            if self.dist_strategy == 'constant':
-                return 0, self.dist_loss_weight
-            elif self.dist_strategy == 'linear':
-                return 1 - epoch_percentage, self.dist_loss_weight*epoch_percentage
-            elif self.dist_strategy == 'linear_constant':
-                return max(0, 0.5 - epoch_percentage)*2, self.dist_loss_weight*min(0.5, epoch_percentage)*2
-            else:
-                raise ValueError(f"Unknown dist strategy '{self.dist_strategy}'")
         
     def _loss(self, data, interpolated, predicted, coord_time_based_weight=1, cat_time_based_weight=1, epoch_percentage=None, prior=None, times=None):
         pred_coords = predicted["coords"]
@@ -1366,33 +1055,19 @@ class MolecularCFM(L.LightningModule):
         type_loss = self._type_loss(data, interpolated, predicted)
         bond_loss = self._bond_loss(data, interpolated, predicted)
         charge_loss = self._charge_loss(data, predicted)
-        if self.dist_loss_weight > 0:
-            # Compute distance squared loss
-            dist_loss = self._dist_loss(data, predicted)
-            coord_weight_factor, dist_weight_factor = self._get_coord_dist_weight(epoch_percentage)
-        else:
-            coord_weight_factor = 1
         
-        coord_loss = (coord_loss * coord_time_based_weight * coord_weight_factor).mean()
+        coord_loss = (coord_loss * coord_time_based_weight).mean()
         type_loss = type_loss.mean() * self.type_loss_weight * cat_time_based_weight
         bond_loss = bond_loss.mean() * self.bond_loss_weight * cat_time_based_weight
         charge_loss = charge_loss.mean() * self.charge_loss_weight * cat_time_based_weight
-        if self.dist_loss_weight > 0:
-            dist_loss = dist_loss.mean()  * coord_time_based_weight * dist_weight_factor  # Use dynamic weight
+        
         losses = {
             "coord-loss": coord_loss,
             "type-loss": type_loss,
             "bond-loss": bond_loss,
             "charge-loss": charge_loss
         }
-        if self.dist_loss_weight > 0:
-            losses["dist-loss"] = dist_loss.mean()
-        # # Log dynamic weights for monitoring
-        # if times is not None and self.dist_strategy == 'linear':
-        #     losses["coord-weight"] = torch.tensor(coord_weight_factor)
-        #     losses["dist-weight"] = torch.tensor(dist_weight_factor)
         
-        # print('loss is ', losses)
         return losses
 
     def _fm_coord_loss(self, data, interpolated, predicted, prior, times):
@@ -1513,14 +1188,6 @@ class MolecularCFM(L.LightningModule):
         print(f"Time taken for time schedule: {time_end - time_start} seconds")
         time_start = time.time()
         cond_batch = self._get_initial_cond_batch(prior) if self.self_condition else None
-        if self.cat_skip_connection is not None:
-            cat_logits = {
-                "atomics": torch.zeros_like(prior["atomics"]),
-                "bonds": torch.zeros_like(prior["bonds"]),
-                "charges": torch.zeros_like(prior["charges"]) / prior["charges"].size(-1),
-            }
-        else:
-            cat_logits = None
         with torch.no_grad():
             
             for t_idx, step_size in enumerate(step_sizes):
@@ -1533,9 +1200,9 @@ class MolecularCFM(L.LightningModule):
                 if gamma > 1:
                     
                     step_size += (times_hat[0].item() - times[0].item())
-                    curr, cat_logits = self._interpolate_with_noise(curr, times, times_hat, cat_logits)
+                    curr = self._interpolate_with_noise(curr, times, times_hat)
 
-                coords, type_logits, bond_logits, charge_logits = self(curr, times_hat, training=False, cond_batch=cond, cat_logits=cat_logits)
+                coords, type_logits, bond_logits, charge_logits = self(curr, times_hat, training=False, cond_batch=cond)
                 times = times_hat - step_size
                 times = torch.clamp(times, min=1e-6)
                 type_probs = F.softmax(type_logits, dim=-1)
@@ -1562,7 +1229,7 @@ class MolecularCFM(L.LightningModule):
                     self.llada_discrete_step = False
                     self.low_confidence_remask = False
                 # New logic: if llada_discrete_step is True, use discrete features directly
-                curr, cat_logits = self._euler_step(curr, predicted, prior, times_hat, step_size, cat_logits)
+                curr = self._euler_step(curr, predicted, prior, times_hat, step_size)
                 if self.llada_discrete_step:
                     
                     # Use predicted discrete features to replace curr, but keep coords unchanged
@@ -1573,16 +1240,11 @@ class MolecularCFM(L.LightningModule):
                         "bonds": F.one_hot(torch.argmax(predicted['bonds'], dim=-1), num_classes=predicted['bonds'].size(-1)).float(),
                         "charges": F.one_hot(torch.argmax(predicted['charges'], dim=-1), num_classes=predicted['charges'].size(-1)).float()
                     })
-                    cat_logits = {
-                        "atomics": predicted['atomics'],
-                        "bonds": predicted['bonds'],
-                        "charges": predicted['charges']
-                    }
                     # Remask discrete features using _interpolate_with_noise
                     # Interpolate from time=0 to current time step
                     zero_times = torch.zeros_like(times)
                     curr_times = times.clone()
-                    curr, cat_logits = self._interpolate_with_noise(curr, zero_times, curr_times, cat_logits, curr_probs = predicted)
+                    curr = self._interpolate_with_noise(curr, zero_times, curr_times, curr_probs = predicted)
                     
                     # Restore coords to keep them unchanged during interpolation
                     curr["coords"] = curr_coords                    
@@ -1590,7 +1252,7 @@ class MolecularCFM(L.LightningModule):
 
         predicted["coords"] = predicted["coords"] * self.coord_scale
         return predicted
-    def _interpolate_with_noise(self, curr, times, times_hat, cat_logits, curr_probs = None):
+    def _interpolate_with_noise(self, curr, times, times_hat, curr_probs = None):
         """Interpolate current state with noise"""
         # Sample from molecules
         batch_size = curr["coords"].size(0)
@@ -1618,44 +1280,13 @@ class MolecularCFM(L.LightningModule):
 
         curr = self._interpolate_mol(from_mols, curr, delta_times, delta_mask_rates, curr_probs = curr_probs)
         
-        if self.cat_skip_connection and cat_logits is not None:
-            cat_logits = self.mix_uniform_and_log(cat_logits, delta_mask_rates)
-        
         print('after interpolate var:', torch.var(curr["coords"][0]), times_hat[0].item())
         
-        return curr, cat_logits
-    def mix_uniform_and_log(self, cat_logits: dict,
-                                mix_rate: float) -> dict:
-        mixed_logits = {}
-        for name, logits in cat_logits.items():
-            dim = -1
-            # 1) softmax probs
-            probs = F.softmax(logits, dim=dim)
-            # 2) uniform dist
-            n_cat = logits.size(-1)
-
-            uniform = torch.ones_like(logits) / n_cat
-            # uniform += torch.rand_like(uniform)*self.integrator.eps
-            # max_index = torch.argmax(uniform, axis=-1)
-            # one_hot = torch.zeros_like(logits)
-            # one_hot.scatter_(-1, max_index.unsqueeze(-1), 1.0)
-
-            # 3) mix
-            mixed = (1.0 - mix_rate) * probs + mix_rate * uniform
-            # mixed = (probs ** (1 - mix_rate)) * (uniform ** mix_rate)
-            mixed = mixed / mixed.sum(dim=-1, keepdim=True)
-
-            # 4) to logits
-            mixed_logits[name] = torch.log(mixed)
-        return mixed_logits
-    def _euler_step(self, curr, predicted, prior, times_hat, step_size, cat_logits):
+        return curr
+    def _euler_step(self, curr, predicted, prior, times_hat, step_size):
         """Perform Euler integration step"""
         curr = self.integrator.step(curr, predicted, prior, times_hat, step_size)
-        if self.cat_skip_connection:
-            cat_logits["atomics"] = curr["atomics_logits"]
-            cat_logits["bonds"] = curr["bonds_logits"]
-        
-        return curr, cat_logits
+        return curr
         
 
     def _generate_mols(self, generated, sanitise=True):

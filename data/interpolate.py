@@ -216,7 +216,8 @@ class GeometricInterpolant(Interpolant):
         time_mean: float = -0.8,
         time_sigma: float = 1.2,
         fixed_time: Optional[float] = None,
-        mask_times_factor: float = 1,
+        # Note: mask_times_factor parameter removed - was used to scale time for mask rate calculation
+        # but is no longer needed. Mask rate is now computed directly from time without scaling.
         mask_rate_strategy: str = None,
     ):
 
@@ -240,7 +241,7 @@ class GeometricInterpolant(Interpolant):
         self.time_mean = time_mean if fixed_time is None else None
         self.time_sigma = time_sigma if fixed_time is None else None
         self.fixed_time = fixed_time
-        self.mask_times_factor = mask_times_factor
+        # mask_times_factor removed - see comment above
         self.mask_rate_strategy = mask_rate_strategy
         # self.time_dist = torch.distributions.Beta(time_alpha, time_beta)
         if self.fixed_time is None:
@@ -358,12 +359,16 @@ class GeometricInterpolant(Interpolant):
         coords_mean = to_mol.coords + from_mol.coords*t
         # coords_noise = torch.randn_like(coords_mean) * self.coord_noise_std
         coords = coords_mean
-        if self.mask_times_factor != 1:
-            t = t*self.mask_times_factor
+        # Note: mask_times_factor scaling removed - time is used directly without scaling
         if self.type_interpolation == "unmask":
             if self.mask_rate_strategy == 'edm':
+                # Note: In training, 'edm' uses log_uniform formula (inconsistent with sampling)
+                # This should probably be unified with the sampling strategy
                 mask_rate = (np.log(t) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
             else:
+                # DFM mask rate formula: mask_rate = t/(t+1) = 1 - 1/(1+t)
+                # Derived from DFM mask prior: mask_rate = w_noise/(w_data + w_noise) = t/(1+t)
+                # where t = w_noise/w_data is the weight ratio
                 mask_rate = 1 - 1/(1+t)
             atom_mask = torch.rand(from_mol.seq_length) < mask_rate
             to_atomics = torch.argmax(to_mol.atomics, dim=-1)
@@ -376,8 +381,12 @@ class GeometricInterpolant(Interpolant):
             to_adj = torch.argmax(to_mol.adjacency, dim=-1)
             from_adj = torch.argmax(from_mol.adjacency, dim=-1)
             if self.mask_rate_strategy == 'edm':
+                # Note: In training, 'edm' uses log_uniform formula (inconsistent with sampling)
+                # This should probably be unified with the sampling strategy
                 mask_rate = (np.log(t) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
             else:
+                # DFM mask rate formula: mask_rate = t/(t+1) = 1 - 1/(1+t)
+                # Derived from DFM mask prior: mask_rate = w_noise/(w_data + w_noise) = t/(1+t)
                 mask_rate = 1 - 1/(1+t)
             bond_mask = torch.rand_like(from_adj.float()) < mask_rate
             to_adj[bond_mask] = from_adj[bond_mask]

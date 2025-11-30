@@ -34,13 +34,11 @@ DEFAULT_ODE_SAMPLING_SCHEDULER = "arcsin"
 DEFAULT_COORD_NOISE_STD_DEV = 0.0
 DEFAULT_MAX_SIGMA = 80
 DEFAULT_MIN_SIGMA = 0.001
-DEFAULT_MASK_TIMES_FACTOR = 1.0
+# DEFAULT_MASK_TIMES_FACTOR removed - parameter no longer used
 DEFAULT_MASK_RATE_STRATEGY = 'edm'
 DEFAULT_INCLUDE_CHARGE=True
-DEFAULT_FIRST_TERM_COEF=1
 DEFAULT_SAMPLING_STRATEGY_FACTOR=2.0
 DEFAULT_SAMPLER = "euler"
-DEFAULT_TEMPERATURE = 1.0
 DEFAULT_LOW_CONFIDENCE_REMASK = None
 
 def load_model(args, vocab, dm):
@@ -99,15 +97,12 @@ def load_model(args, vocab, dm):
         cat_noise_level=args.cat_sampling_noise_level,
         prior_sampler = dm.prior_sampler,
         data_module = dm,
-        mask_times_factor = args.mask_times_factor,
-        use_edm_mask_step = args.use_edm_mask_step,
+        # mask_times_factor removed - see Integrator class for details
         mask_rate_strategy = args.mask_rate_strategy,
         max_sigma = args.max_sigma,
         min_sigma = args.min_sigma,
-        first_term_coef=args.first_term_coef,
         adaptive_cat_noise_level=args.adaptive_cat_noise_level,
         sampler=args.sampler,
-        temperature=args.temperature,
     )
     fm_model = MolecularCFM.load_from_checkpoint(
         args.ckpt_path,
@@ -169,7 +164,7 @@ def build_dm(args, hparams, vocab):
         bond_interpolation=hparams["val-bond-interpolation"],
         equivariant_ot=False,
         batch_ot=False,
-        mask_times_factor = args.mask_times_factor,
+        # mask_times_factor removed - see GeometricInterpolant class for details
         mask_rate_strategy = args.mask_rate_strategy,
     )
     dm = GeometricInterpolantDM(
@@ -316,14 +311,11 @@ if __name__ == "__main__":
     parser.add_argument("--use_dist_loss", action="store_true")
     # Allow overridding for EGNN arch since some models were not saved with a value for n_layers
     parser.add_argument("--n_layers", type=int, default=None)
-    parser.add_argument("--mask_times_factor", type=float, default=DEFAULT_MASK_TIMES_FACTOR)
+    # --mask_times_factor removed - parameter no longer used
     parser.add_argument("--mask_rate_strategy", type=str, default=DEFAULT_MASK_RATE_STRATEGY)
-    parser.add_argument("--use_edm_mask_step", action="store_true")
-    parser.add_argument("--first_term_coef", type=float, default=DEFAULT_FIRST_TERM_COEF)
     parser.add_argument("--adaptive_cat_noise_level", action="store_true")
     parser.add_argument("--no_novelty", action="store_true")
     parser.add_argument("--sampler", type=str, default=DEFAULT_SAMPLER)
-    parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     parser.add_argument("--sampling_strategy_factor", type=float, default=DEFAULT_SAMPLING_STRATEGY_FACTOR)
     parser.add_argument("--low_confidence_remask", type=str, default=DEFAULT_LOW_CONFIDENCE_REMASK)
     args = parser.parse_args()

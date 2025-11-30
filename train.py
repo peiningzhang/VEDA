@@ -45,7 +45,6 @@ DEFAULT_CATEGORICAL_STRATEGY = "uniform-sample"
 DEFAULT_LR_SCHEDULE = "constant"
 DEFAULT_WARM_UP_STEPS = 10000
 DEFAULT_BUCKET_COST_SCALE = "linear"
-DEFAULT_CAT_SKIP_CONNECTION = None
 
 DEFAULT_N_VALIDATION_MOLS = 2000
 DEFAULT_VAL_CHECK_EPOCHS = 10
@@ -53,10 +52,8 @@ DEFAULT_NUM_INFERENCE_STEPS = 100
 DEFAULT_CAT_SAMPLING_NOISE_LEVEL = 1
 DEFAULT_COORD_NOISE_STD_DEV = 0.0
 DEFAULT_TYPE_DIST_TEMP = 1.0
-DEFAULT_MASK_TIMES_FACTOR = 1.0
+# DEFAULT_MASK_TIMES_FACTOR removed - parameter no longer used
 DEFAULT_MASK_RATE_STRATEGY = None
-DEFAULT_DIST_STRATEGY = "constant"
-DEFAULT_DIST_LOSS_WEIGHT = 1.0
 # DEFAULT_TIME_ALPHA = 2.0
 # DEFAULT_TIME_BETA = 1.0
 DEFAULT_TIME_MEAN = -1.26
@@ -76,7 +73,6 @@ def build_model(args, dm, vocab):
         "dataset": args.dataset,
         "precision": "32",
         "architecture": args.arch,
-        "shortcut_training": args.shortcut_training,
         **dm.hparams,
     }
 
@@ -156,8 +152,7 @@ def build_model(args, dm, vocab):
         bond_mask_index=bond_mask_index,
         prior_sampler = dm.prior_sampler,
         data_module = dm,
-        mask_times_factor = args.mask_times_factor,
-        use_edm_mask_step = args.use_edm_mask_step,
+        # mask_times_factor removed - see Integrator class for details
         mask_rate_strategy = args.mask_rate_strategy,
         max_sigma=args.max_sigma,
         min_sigma=args.min_sigma,
@@ -174,9 +169,6 @@ def build_model(args, dm, vocab):
         type_loss_weight=args.type_loss_weight,
         bond_loss_weight=args.bond_loss_weight,
         charge_loss_weight=args.charge_loss_weight,
-        use_dist_loss=args.use_dist_loss,
-        dist_strategy=args.dist_strategy,
-        dist_loss_weight=args.dist_loss_weight,
         use_fm_coord_loss=args.use_fm_coord_loss,
         pairwise_metrics=False,
         use_ema=args.use_ema,
@@ -193,7 +185,6 @@ def build_model(args, dm, vocab):
         max_sigma=args.max_sigma,
         min_sigma=args.min_sigma,
         rho=args.rho,
-        cat_skip_connection=args.cat_skip_connection,
         use_cat_time_based_weight=args.use_cat_time_based_weight,
         use_x_pred = args.use_x_pred,
         x_pred_type = args.x_pred_type,
@@ -296,7 +287,7 @@ def build_dm(args, vocab):
         time_mean=args.time_mean,
         time_sigma=args.time_sigma,
         fixed_time=train_fixed_time,
-        mask_times_factor = args.mask_times_factor,
+        # mask_times_factor removed - see GeometricInterpolant class for details
         mask_rate_strategy = args.mask_rate_strategy,
     )
     eval_interpolant = GeometricInterpolant(
@@ -307,7 +298,7 @@ def build_dm(args, vocab):
         equivariant_ot=False,
         batch_ot=False,
         fixed_time=0.5,
-        mask_times_factor = args.mask_times_factor,
+        # mask_times_factor removed - see GeometricInterpolant class for details
     )
 
     dm = GeometricInterpolantDM(
@@ -433,20 +424,14 @@ if __name__ == "__main__":
     parser.add_argument("--type_loss_weight", type=float, default=DEFAULT_TYPE_LOSS_WEIGHT)
     parser.add_argument("--bond_loss_weight", type=float, default=DEFAULT_BOND_LOSS_WEIGHT)
     parser.add_argument("--charge_loss_weight", type=float, default=DEFAULT_CHARGE_LOSS_WEIGHT)
-    parser.add_argument("--use_dist_loss", action="store_true")
-    parser.add_argument("--dist_strategy", type=str, default=DEFAULT_DIST_STRATEGY)
-    parser.add_argument("--dist_loss_weight", type=float, default=DEFAULT_DIST_LOSS_WEIGHT)
     parser.add_argument("--categorical_strategy", type=str, default=DEFAULT_CATEGORICAL_STRATEGY)
     parser.add_argument("--lr_schedule", type=str, default=DEFAULT_LR_SCHEDULE)
     parser.add_argument("--warm_up_steps", type=int, default=DEFAULT_WARM_UP_STEPS)
     parser.add_argument("--bucket_cost_scale", type=str, default=DEFAULT_BUCKET_COST_SCALE)
     parser.add_argument("--no_ema", action="store_false", dest="use_ema")
     parser.add_argument("--self_condition", action="store_true")
-    parser.add_argument("--shortcut_training", action="store_true")
     parser.add_argument("--test_run", action="store_true")    
     parser.add_argument("--mask_rate_strategy", type=str, default=DEFAULT_MASK_RATE_STRATEGY)
-    parser.add_argument("--use_edm_mask_step", action="store_true")
-    parser.add_argument("--cat_skip_connection", type=str, default=DEFAULT_CAT_SKIP_CONNECTION)
     parser.add_argument("--use_cat_time_based_weight", action="store_true")
     parser.add_argument("--use_fm_coord_loss", action="store_true")
 
@@ -457,7 +442,7 @@ if __name__ == "__main__":
     parser.add_argument("--cat_sampling_noise_level", type=int, default=DEFAULT_CAT_SAMPLING_NOISE_LEVEL)
     parser.add_argument("--coord_noise_std_dev", type=float, default=DEFAULT_COORD_NOISE_STD_DEV)
     parser.add_argument("--type_dist_temp", type=float, default=DEFAULT_TYPE_DIST_TEMP)
-    parser.add_argument("--mask_times_factor", type=float, default=DEFAULT_MASK_TIMES_FACTOR)
+    # --mask_times_factor removed - parameter no longer used
     parser.add_argument("--use_x_pred", action="store_true")
     parser.add_argument("--x_pred_type", type=str, default='v1')
 
