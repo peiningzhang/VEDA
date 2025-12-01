@@ -456,7 +456,7 @@ if __name__ == "__main__":
     parser.add_argument("--optimal_transport", type=str, default=DEFAULT_OPTIMAL_TRANSPORT)
     parser.add_argument("--max_sigma", type=float, default=DEFAULT_MAX_SIGMA)
     parser.add_argument("--min_sigma", type=float, default=DEFAULT_MIN_SIGMA)
-    # --rho removed - merged into --sampling_scheduler_factor_rho
+    parser.add_argument("--sampling_scheduler_factor_rho", type=float, default=DEFAULT_SAMPLING_SCHEDULER_FACTOR_RHO)
     
 
     parser.set_defaults(

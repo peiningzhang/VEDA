@@ -8,8 +8,6 @@ Compared to the MiDi baseline, VEDA adds residual preconditioning to better inte
 
 ## Repository status
 
-**Update (July 2024):** Several historical checkpoints vanished when the original drive account was deleted. If you have local copies, please reach out at `vignac.clement@gmail.com` or open an issue so we can re-host them.
-
 ## Installation
 
 This code was tested with PyTorch 2.0.1, CUDA 11.8, and torch_geometric 2.3.1 on multi-GPU machines.
@@ -68,10 +66,9 @@ python train.py \
   --epochs 300 \
   --mask_rate_strategy edm \
   --optimal_transport None \
-  --val_check_epochs 10 \
   --warm_up_steps 2000 \
   --bond_loss_weight 0.5 \
-  --use_cat_time_based_weight
+  --x_pred_mode adaptive
 ```
 
 This command activates the EDM-style mask schedule, annealed VE noise, and categorical time-weighting described in [the VEDA paper](https://arxiv.org/abs/2511.09568), providing the configuration we use to report QM9 metrics. Adjust epochs, validation cadence, or transport settings as needed for GEOM-DRUGS or ablation studies.
@@ -86,8 +83,9 @@ python train.py \
   --dataset geom-drugs \
   --mask_rate_strategy edm \
   --optimal_transport None \
+  --val_check_epochs 5 \
   --use_cat_time_based_weight \
-  --val_check_epochs 5
+  --x_pred_mode adaptive
 ```
 
 This configuration matches the GEOM-DRUGS runs described in the preprint and serves as the starting point for all ablations on that dataset.

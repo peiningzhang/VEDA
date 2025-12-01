@@ -65,6 +65,9 @@ class Integrator:
         self.min_sigma = min_sigma
         self.adaptive_cat_noise_level = adaptive_cat_noise_level
         self.sampler = sampler
+        if self.mask_rate_strategy == 'log_uniform':
+            self.time_mean = np.log((self.min_sigma*self.max_sigma)**0.5)
+            self.time_sigma = (np.log(self.max_sigma) - np.log(self.min_sigma))/8
     @property
     def hparams(self):
         return {
@@ -229,8 +232,7 @@ class Integrator:
         - When t → 0 (low noise weight): mask_rate → 0 (mostly keep original data)
         - When t → ∞ (high noise weight): mask_rate → 1 (mostly mask/noise)
         """
-        self.time_mean = np.log((self.min_sigma*self.max_sigma)**0.5)
-        self.time_sigma = (np.log(self.max_sigma) - np.log(self.min_sigma))/8
+
         if self.mask_rate_strategy == 'log_uniform':
             # Note: mask_times_factor removed - log_uniform strategy now always uses unscaled time
             original_mask_rates = (np.log(times.cpu()) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
@@ -256,9 +258,12 @@ class Integrator:
         See _compute_mask_rate_deltas docstring for detailed explanation.
         """
         if self.mask_rate_strategy == 'log_uniform':
-            mask_rates = float((np.log(times.cpu()) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8))
+            # Extract first element if times is a tensor with multiple elements
+            # Similar to _compute_mask_rate_deltas, extract scalar value first
+            t = times[0].item() if isinstance(times, torch.Tensor) else times[0] if hasattr(times, '__getitem__') else times
+            mask_rates = float((np.log(t) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8))
         else:  # 'edm' or None - uses DFM formula: mask_rate = t/(t+1)
-            mask_rates = float((times/(times + 1))[0].item())
+            mask_rates = (times/(times + 1))[0].item()
         mask_rates = np.clip(mask_rates, self.eps, 1 - self.eps)
         return mask_rates
     
@@ -784,7 +789,6 @@ class MolecularCFM(L.LightningModule):
         cond_batch = self._get_initial_cond_batch(interpolated) if self.self_condition else None
         # Apply self conditioning
         if self.self_condition and torch.rand(1).item() > 0.5:
-            print('self condition')
             cond_batch = self._generate_self_condition(interpolated, times, cond_batch)
 
         

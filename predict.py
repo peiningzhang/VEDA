@@ -48,8 +48,6 @@ def load_model(args, vocab, dm):
     hparams["compile_model"] = False
     hparams["integration-steps"] = args.integration_steps
     hparams["sampling_scheduler"] = args.ode_sampling_scheduler
-    if 'use_dist_loss' not in hparams:
-        hparams['use_dist_loss'] = args.use_dist_loss
 
     n_bond_types = util.get_n_bond_types(hparams["integration-type-strategy"])
 
@@ -104,6 +102,10 @@ def load_model(args, vocab, dm):
         adaptive_cat_noise_level=args.adaptive_cat_noise_level,
         sampler=args.sampler,
     )
+    # Remove sampling_scheduler_factor_rho from hparams if present to avoid duplicate argument
+    hparams.pop("sampling_scheduler_factor_rho", None)
+    hparams.pop("low_confidence_remask", None)
+    
     fm_model = MolecularCFM.load_from_checkpoint(
         args.ckpt_path,
         gen=egnn_gen,

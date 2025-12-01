@@ -93,6 +93,10 @@ def load_model(args, vocab, dm):
         adaptive_cat_noise_level=args.adaptive_cat_noise_level,
         sampler=args.sampler,
     )
+    # Remove sampling_scheduler_factor_rho from hparams if present to avoid duplicate argument
+    hparams.pop("sampling_scheduler_factor_rho", None)
+    hparams.pop("low_confidence_remask", None)
+    
     fm_model = MolecularCFM.load_from_checkpoint(
         args.ckpt_path,
         gen=egnn_gen,
