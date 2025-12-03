@@ -169,7 +169,6 @@ def build_model(args, dm, vocab):
         type_loss_weight=args.type_loss_weight,
         bond_loss_weight=args.bond_loss_weight,
         charge_loss_weight=args.charge_loss_weight,
-        use_fm_coord_loss=args.use_fm_coord_loss,
         pairwise_metrics=False,
         use_ema=args.use_ema,
         compile_model=False,
@@ -432,7 +431,6 @@ if __name__ == "__main__":
     parser.add_argument("--test_run", action="store_true")    
     parser.add_argument("--mask_rate_strategy", type=str, default=DEFAULT_MASK_RATE_STRATEGY)
     parser.add_argument("--use_cat_time_based_weight", action="store_true")
-    parser.add_argument("--use_fm_coord_loss", action="store_true")
 
     parser.add_argument("--x_pred_mode", type=str, default=None, choices=[None, 'constant', 'adaptive'],
                        help="X-prediction mode: None (disabled), 'constant' (standard EDM), or 'adaptive' (with αt)")

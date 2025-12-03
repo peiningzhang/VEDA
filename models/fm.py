@@ -527,7 +527,6 @@ class MolecularCFM(L.LightningModule):
         type_loss_weight: float = 1.0,
         bond_loss_weight: float = 1.0,
         charge_loss_weight: float = 1.0,
-        use_fm_coord_loss: bool = False,
         use_cat_time_based_weight: bool = False,
         pairwise_metrics: bool = True,
         use_ema: bool = True,
@@ -601,7 +600,6 @@ class MolecularCFM(L.LightningModule):
         self.sigma_data = sigma_data
         self.use_cat_time_based_weight = use_cat_time_based_weight
         self.soft_label = False
-        self.use_fm_coord_loss = use_fm_coord_loss
         # x_pred_mode: None (disabled), 'constant' (standard EDM), or 'adaptive' (with αt subtraction)
         self.x_pred_mode = x_pred_mode
         builder = MolBuilder(vocab)
@@ -643,7 +641,6 @@ class MolecularCFM(L.LightningModule):
             "compile_model": compile_model,
             "warm_up_steps": warm_up_steps,
             "sigma_data": sigma_data,
-            "use_fm_coord_loss": use_fm_coord_loss,
             "x_pred_mode": x_pred_mode,
             **gen.hparams,
             **integrator.hparams,
@@ -965,10 +962,7 @@ class MolecularCFM(L.LightningModule):
         pred_coords = predicted["coords"]
         coords = data["coords"]
         mask = data["mask"].unsqueeze(2)
-        if self.use_fm_coord_loss:
-            coord_loss = self._fm_coord_loss(data, interpolated, predicted, prior, times)
-        else:
-            coord_loss = F.mse_loss(pred_coords, coords, reduction="none")
+        coord_loss = F.mse_loss(pred_coords, coords, reduction="none")
         coord_loss = (coord_loss * mask).mean(dim=(1, 2))
 
         type_loss = self._type_loss(data, interpolated, predicted)
@@ -989,13 +983,6 @@ class MolecularCFM(L.LightningModule):
         
         return losses
 
-    def _fm_coord_loss(self, data, interpolated, predicted, prior, times):
-        x_t_rescale = interpolated["coords"]/(times[0].item()**2+self.sigma_data**2)**0.5
-        pred_x_rescale = predicted["coords"]/(times[0].item()**2+self.sigma_data**2)**0.5
-        pred_velocity = (pred_x_rescale - x_t_rescale)
-        target_velocity = (data["coords"]*times[0].item() - prior["coords"])/(times[0].item()**2+self.sigma_data**2)**1.5
-        coord_loss = F.mse_loss(pred_velocity, target_velocity, reduction="none")#*(times[0].item()**2+self.sigma_data**2)**4/1000 
-        return coord_loss
     def _type_loss(self, data, interpolated, predicted, eps=1e-3):
         pred_logits = predicted["atomics"]
         atomics_dist = data["atomics"]
