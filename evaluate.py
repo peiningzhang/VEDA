@@ -31,7 +31,7 @@ DEFAULT_INCLUDE_CHARGE=True
 DEFAULT_SAMPLING_SCHEDULER_FACTOR_RHO = 2.0
 DEFAULT_SAMPLER = "euler"
 DEFAULT_LOW_CONFIDENCE_REMASK = None
-
+DEFAULT_TEMPERATURE = 1.0
 def load_model(args, vocab, dm):
     checkpoint = torch.load(args.ckpt_path)
     hparams = checkpoint["hyper_parameters"]
@@ -92,6 +92,7 @@ def load_model(args, vocab, dm):
         min_sigma = args.min_sigma,
         adaptive_cat_noise_level=args.adaptive_cat_noise_level,
         sampler=args.sampler,
+        temperature=args.temperature,
     )
     # Remove sampling_scheduler_factor_rho from hparams if present to avoid duplicate argument
     hparams.pop("sampling_scheduler_factor_rho", None)
@@ -284,5 +285,6 @@ if __name__ == "__main__":
     parser.add_argument("--sampling_scheduler_factor_rho", type=float, default=DEFAULT_SAMPLING_SCHEDULER_FACTOR_RHO,
                        help="Mixing factor for arcsin time schedule (merged from sampling_strategy_factor and rho)")
     parser.add_argument("--low_confidence_remask", type=str, default=DEFAULT_LOW_CONFIDENCE_REMASK)
+    parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     args = parser.parse_args()
     main(args)

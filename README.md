@@ -57,7 +57,7 @@ We reuse MiDi’s preprocessing pipeline. Follow their instructions for download
 
 ## Running QM9 experiments
 
-For the QM9 “smol” setup discussed in the paper, we launch training with:
+For the QM9 "smol" setup discussed in the paper, we launch training with:
 
 ```bash
 python train.py \
@@ -68,10 +68,31 @@ python train.py \
   --optimal_transport None \
   --warm_up_steps 2000 \
   --bond_loss_weight 0.5 \
-  --x_pred_mode adaptive
+  --use_cat_time_based_weight \
+  --x_pred_mode constant
 ```
 
 This command activates the EDM-style mask schedule, annealed VE noise, and categorical time-weighting described in [the VEDA paper](https://arxiv.org/abs/2511.09568), providing the configuration we use to report QM9 metrics. Adjust epochs, validation cadence, or transport settings as needed for GEOM-DRUGS or ablation studies.
+
+### Evaluation
+
+To evaluate a trained QM9 model:
+
+```bash
+python evaluate.py \
+  --data_path path/data/qm9/smol/ \
+  --ckpt_path qm9/checkpoints/last.ckpt \
+  --dataset qm9 \
+  --n_replicates 1 \
+  --integration_steps 100 \
+  --mask_rate_strategy log_uniform \
+  --coord_noise_std_dev 0.4 \
+  --cat_sampling_noise_level 1 \
+  --sampler euler \
+  --sampling_scheduler_factor_rho 2.0 \
+  --temperature 0.9 \
+  --adaptive_cat_noise_level
+```
 
 ## Running GEOM-DRUGS experiments
 
@@ -83,8 +104,7 @@ python train.py \
   --dataset geom-drugs \
   --mask_rate_strategy edm \
   --optimal_transport None \
-  --val_check_epochs 5 \
-  --use_cat_time_based_weight \
+  --val_check_epochs 10 \
   --x_pred_mode adaptive
 ```
 

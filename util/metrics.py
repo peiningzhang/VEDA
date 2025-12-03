@@ -409,7 +409,6 @@ class FCD_Score(GenerativeMetric):
         Returns the FCD score between all accumulated generated SMILES
         and the reference distribution.
         """
-        print('generated smiles', self.generated_smiles)
         try:
             score = self.fcd(self.generated_smiles, pgen=self.pgen_ref)
         except Exception as e:

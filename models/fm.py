@@ -43,6 +43,7 @@ class Integrator:
         min_sigma: float = 0.001,
         adaptive_cat_noise_level = False,
         sampler = 'euler',
+        temperature = 1.0,
     ):
 
         self._check_cat_sampling_strategy(type_strategy, type_mask_index, "type")
@@ -68,6 +69,7 @@ class Integrator:
         if self.mask_rate_strategy == 'log_uniform':
             self.time_mean = np.log((self.min_sigma*self.max_sigma)**0.5)
             self.time_sigma = (np.log(self.max_sigma) - np.log(self.min_sigma))/8
+        self.temperature = temperature
     @property
     def hparams(self):
         return {
@@ -96,7 +98,7 @@ class Integrator:
         # *** Atom type update step ***
         # Note: mask_times_factor scaling removed - time is used directly without scaling
 
-        if self.mask_rate_strategy in ['edm', 'log_uniform']:
+        if self.mask_rate_strategy in ['edm', 'log_uniform'] and self.sampler == 'euler':
             if t[0].item() > (self.max_sigma-self.eps):
                 inf = (1/self.eps)
                 step_size += t[0].item()*inf
@@ -113,7 +115,7 @@ class Integrator:
             atomics, atomics_probs = self._dfm_gat_sampler_step(curr["atomics"], predicted["atomics"], t, step_size)
             bonds, bonds_probs = self._dfm_gat_sampler_step(curr["bonds"], predicted["bonds"], t, step_size)
         else:
-            raise ValueError("Mask rate strategy not implemented")
+            raise ValueError(f"Unsupported sampler '{self.sampler}' with mask_rate_strategy '{self.mask_rate_strategy}'. Supported combinations: sampler='euler' with mask_rate_strategy in ['edm', 'log_uniform'], or sampler='dfm-pc'")
 
 
         updated = {
@@ -544,7 +546,7 @@ class MolecularCFM(L.LightningModule):
         max_sigma: Optional[float] = 80,
         min_sigma: Optional[float] = 0.001,
         sigma_data: Optional[float] = 1.0,
-        low_confidence_remask: Optional[bool] = False,
+        low_confidence_remask: Optional[str] = None,
         # x_pred_mode: None (disabled), 'constant' (standard EDM preconditioning), 
         # or 'adaptive' (with adaptive identity component subtraction)
         # Merged from use_x_pred and x_pred_type parameters
@@ -617,13 +619,13 @@ class MolecularCFM(L.LightningModule):
         # x_pred_mode already set above
         if self.integrator.sampler == 'llada':
             self.use_CM_coord_step = False
-            self.use_llada_discrete_step = True
+            self.llada_discrete_step = True
         elif self.integrator.sampler == 'llada-cm':
             self.use_CM_coord_step = True
-            self.use_llada_discrete_step = True
+            self.llada_discrete_step = True
         else:
             self.use_CM_coord_step = False
-            self.use_llada_discrete_step = False
+            self.llada_discrete_step = False
         # Anything else passed into kwargs will also be saved
         hparams = {
             "lr": lr,
@@ -897,7 +899,6 @@ class MolecularCFM(L.LightningModule):
             warm_up_steps = 0 if self.warm_up_steps is None else self.warm_up_steps
             scheduler = LinearLR(opt, start_factor=1e-2, total_iters=warm_up_steps)
 
-        # TODO could use warm_up_steps to shift peak of one cycle
         elif self.lr_schedule == "one-cycle":
             scheduler = OneCycleLR(opt, max_lr=self.lr, total_steps=self.total_steps, pct_start=0.3)
 
@@ -1111,8 +1112,7 @@ class MolecularCFM(L.LightningModule):
             for t_idx, step_size in enumerate(step_sizes):
                 cond = cond_batch if self.self_condition else None
                 gamma = self.integrator.coord_noise_std
-                gamma = 1
-                # gamma = 1 + gamma if 0.03 <= (times[0].item()) <= 3 else 1
+                gamma = 1 + gamma if 0.03 <= (times[0].item()) <= 3 else 1
                 times_hat = times*gamma
 
                 if gamma > 1:
@@ -1123,9 +1123,9 @@ class MolecularCFM(L.LightningModule):
                 coords, type_logits, bond_logits, charge_logits = self(curr, times_hat, training=False, cond_batch=cond)
                 times = times_hat - step_size
                 times = torch.clamp(times, min=1e-6)
-                type_probs = F.softmax(type_logits, dim=-1)
-                bond_probs = F.softmax(bond_logits, dim=-1)
-                charge_probs = F.softmax(charge_logits, dim=-1)
+                type_probs = F.softmax(type_logits/self.integrator.temperature, dim=-1)
+                bond_probs = F.softmax(bond_logits/self.integrator.temperature, dim=-1)
+                charge_probs = F.softmax(charge_logits/self.integrator.temperature, dim=-1)
 
                 cond_batch = {
                     "coords": coords,
@@ -1140,33 +1140,138 @@ class MolecularCFM(L.LightningModule):
                     "mask": curr["mask"]
                 }
 
-                if self.type_strategy == "mask":
-                    self.llada_discrete_step = True
-                    self.low_confidence_remask = False
-                else:
-                    self.llada_discrete_step = False
-                    self.low_confidence_remask = False
-                # New logic: if llada_discrete_step is True, use discrete features directly
-                curr = self._euler_step(curr, predicted, prior, times_hat, step_size)
-                if self.llada_discrete_step:
+                if self.llada_discrete_step or self.use_CM_coord_step:
                     
                     # Use predicted discrete features to replace curr, but keep coords unchanged
                     # print('curr coords before', curr["coords"][0])
-                    curr_coords = curr["coords"].clone()  # Save original coords
-                    curr.update({
-                        "atomics": F.one_hot(torch.argmax(predicted['atomics'], dim=-1), num_classes=predicted['atomics'].size(-1)).float(),
-                        "bonds": F.one_hot(torch.argmax(predicted['bonds'], dim=-1), num_classes=predicted['bonds'].size(-1)).float(),
-                        "charges": F.one_hot(torch.argmax(predicted['charges'], dim=-1), num_classes=predicted['charges'].size(-1)).float()
-                    })
-                    # Remask discrete features using _interpolate_with_noise
-                    # Interpolate from time=0 to current time step
-                    zero_times = torch.zeros_like(times)
-                    curr_times = times.clone()
-                    curr = self._interpolate_with_noise(curr, zero_times, curr_times, curr_probs = predicted)
+                    if not self.use_CM_coord_step:
+                        curr_coords = curr["coords"].clone()  # Save original coords
+                    if not self.llada_discrete_step:
+                        curr_atomics = curr["atomics"].clone()
+                        curr_bonds = curr["bonds"].clone()
+                    _, new_mask_rates, original_mask_rates = self.integrator._compute_mask_rate_deltas(times, times_hat)
+                    delta_mask_rates = original_mask_rates - new_mask_rates
+                    # Calculate confidence using top-k margin for current probabilities
+                    # Calculate confidence using top-k margin for predicted probabilities
+                    predicted_probs = {
+                        "atomics": predicted["atomics"],  # Already softmax probabilities
+                        "bonds": predicted["bonds"],
+                        "charges": predicted["charges"]
+                    }
                     
-                    # Restore coords to keep them unchanged during interpolation
-                    curr["coords"] = curr_coords                    
-                    # print('curr coords after', curr["coords"][0])
+                    
+                    # Compute confidence (top-k margin) for each feature
+                    def compute_confidence(probs):
+                        if self.low_confidence_remask == 'prob_margin':
+                            sorted_probs = torch.sort(probs, dim=-1, descending=True)[0]
+                            return sorted_probs[..., 0] - sorted_probs[..., 1]
+                        elif self.low_confidence_remask == 'confidence':
+                            return torch.max(probs, dim=-1)[0]
+                        else:
+                            raise ValueError(f"Unknown low confidence remask strategy '{self.low_confidence_remask}'")
+                    
+                    atomics_confidence = compute_confidence(predicted_probs["atomics"])
+                    bonds_confidence = compute_confidence(predicted_probs["bonds"])                    
+                    # Select top confidence positions where prediction differs from current
+                    def select_top_confidence_different_mask(confidence, pred_argmax, curr_argmax, delta_rate):
+                        """Select top confidence positions where prediction differs from current"""
+                        # Find positions where prediction differs from current
+                        different_mask = (pred_argmax != curr_argmax)
+                        
+                        # If no differences, return empty mask
+                        if not different_mask.any():
+                            return torch.zeros_like(confidence, dtype=torch.bool)
+                        
+                        # Set confidence to -inf where predictions are the same
+                        masked_confidence = confidence.clone()
+                        masked_confidence[~different_mask] = float('-inf')
+                        
+                        # Flatten for topk selection
+                        confidence_reshaped = masked_confidence.flatten()
+                        seq_len = confidence_reshaped.shape[0]
+                        num_update = max(1, int(seq_len * delta_rate))
+                        
+                        # Get top confidence position indices among different positions
+                        _, top_indices = torch.topk(confidence_reshaped, k=num_update, dim=-1)
+                        
+                        # Create mask
+                        mask = torch.zeros_like(confidence_reshaped, dtype=torch.bool)
+                        mask.scatter_(-1, top_indices, True)
+                        mask = mask.reshape(confidence.shape)
+                        
+                        # Ensure we only select positions that are actually different
+                        mask = mask & different_mask
+                        
+                        return mask
+                    predicted_argmax = {
+                        "atomics": torch.argmax(predicted["atomics"], dim=-1),
+                        "bonds": torch.argmax(predicted["bonds"], dim=-1),
+                        "charges": torch.argmax(predicted["charges"], dim=-1),
+                    }
+                    
+                    # Get current argmax
+                    curr_argmax = {
+                        "atomics": torch.argmax(curr["atomics"], dim=-1),
+                        "bonds": torch.argmax(curr["bonds"], dim=-1),
+                    }
+                    # Create update masks for each batch sample
+                    update_masks = {
+                        "atomics": torch.stack([select_top_confidence_different_mask(
+                            atomics_confidence[i:i+1], 
+                            predicted_argmax["atomics"][i:i+1], 
+                            curr_argmax["atomics"][i:i+1], 
+                            delta_mask_rates
+                        ) for i in range(atomics_confidence.size(0))]).squeeze(1),
+                        
+                        "bonds": torch.stack([select_top_confidence_different_mask(
+                            bonds_confidence[i:i+1], 
+                            predicted_argmax["bonds"][i:i+1], 
+                            curr_argmax["bonds"][i:i+1], 
+                            delta_mask_rates
+                        ) for i in range(bonds_confidence.size(0))]).squeeze(1),
+                    }
+
+                    
+                    # Update curr with confidence-based replacement
+                    curr.update({
+                        "atomics": torch.where(
+                            update_masks["atomics"].unsqueeze(-1),
+                            F.one_hot(torch.argmax(predicted['atomics'], dim=-1), num_classes=predicted['atomics'].size(-1)).float(),
+                            curr["atomics"]
+                        ),
+                        "bonds": torch.where(
+                            update_masks["bonds"].unsqueeze(-1),
+                            F.one_hot(torch.argmax(predicted['bonds'], dim=-1), num_classes=predicted['bonds'].size(-1)).float(),
+                            curr["bonds"]
+                        ),
+                    })
+                    curr["coords"] = predicted["coords"]
+                    # 判断哪些属性需要用 Euler 步骤更新
+                    needs_euler_coords = not self.use_CM_coord_step
+                    needs_euler_discrete = not self.llada_discrete_step
+
+                    # 恢复原始值以保持插值期间不变
+                    if needs_euler_coords:
+                        curr["coords"] = curr_coords
+                    if needs_euler_discrete:
+                        curr["atomics"] = curr_atomics
+                        curr["bonds"] = curr_bonds
+
+                    # 执行 Euler 步骤并选择性更新
+                    if needs_euler_coords or needs_euler_discrete:
+                        integrator_sampler = self.integrator.sampler
+                        self.integrator.sampler = 'euler'
+                        curr_temp = self._euler_step(curr, predicted, prior, times_hat, step_size)
+                        self.integrator.sampler = integrator_sampler
+                        
+                        if needs_euler_coords:
+                            curr["coords"] = curr_temp["coords"]
+                        if needs_euler_discrete:
+                            curr["atomics"] = curr_temp["atomics"]
+                            curr["bonds"] = curr_temp["bonds"]
+                elif self.integrator.sampler in ['euler', 'dfm-pc', 'dfm-poisson']:
+                    # Standard Euler step for normal samplers
+                    curr = self._euler_step(curr, predicted, prior, times_hat, step_size)
 
         predicted["coords"] = predicted["coords"] * self.coord_scale
         return predicted
@@ -1246,9 +1351,15 @@ class MolecularCFM(L.LightningModule):
         # Interpolate coords and add gaussian noise
         coords = to_mols["coords"] + from_mols["coords"]*delta_t
 # Handle atomics
-        if self.llada_discrete_step and self.low_confidence_remask and curr_probs is not None:
+        if self.llada_discrete_step and self.low_confidence_remask =='confidence' and curr_probs is not None:
+            # delta_mask_rate = new_mask_rates
             atomics_confidence = torch.max(curr_probs["atomics"], dim=-1)[0]
             atom_mask = atomics_confidence < torch.quantile(atomics_confidence.flatten(), delta_mask_rate)
+        elif self.llada_discrete_step and self.low_confidence_remask == 'prob_margin' and curr_probs is not None:
+            top2_atomics = torch.topk(curr_probs["atomics"], k=2, dim=-1)[0]
+            atom_margin = top2_atomics[:, :, 0] - top2_atomics[:, :, 1]
+            atom_mask = atom_margin < torch.quantile(atom_margin.flatten(), delta_mask_rate)
+            print('using prob margin')
         else:
             atom_mask = torch.rand(from_mols["atomics"].size(0), from_mols["atomics"].size(1)) < delta_mask_rate
     

@@ -3,7 +3,7 @@
 # Model: /home/phz24002/Drug_Discovery/VEDA/wandb/equinv-qm9/p5gilxmq/checkpoints/last.ckpt
 # Dataset: /home/phz24002/Drug_Discovery/semla-flow/data/qm9
 
-MODEL_PATH="/home/phz24002/Drug_Discovery/VEDA/wandb/equinv-qm9/p5gilxmq/checkpoints/last.ckpt"
+MODEL_PATH="/home/phz24002/Drug_Discovery/VEDA/wandb/equinv-qm9/iyzk7gr1/checkpoints/last.ckpt"
 DATA_PATH="/home/phz24002/Drug_Discovery/semla-flow/data/qm9/smol"
 
 # Example 1: Evaluate the model on test set
