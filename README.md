@@ -30,19 +30,6 @@ After downloading the raw pickle files, place them in a `raw` folder and run:
 python preprocess.py --data_path path/to/geom-drugs --raw_data_folder raw --save_data_folder smol
 ```
 
-## Citation
-
-If you use this code in your research, please cite:
-
-```bibtex
-@article{zhang2025veda,
-  title={VEDA: 3D Molecular Generation via Variance-Exploding Diffusion with Annealing},
-  author={Zhang, Peining and Bi, Jinbo and Song, Minghu},
-  journal={arXiv preprint arXiv:2511.09568},
-  year={2025}
-}
-```
-
 ## Installation
 
 This code was tested with PyTorch 2.0.1, CUDA 11.8, and torch_geometric 2.3.1 on multi-GPU machines.
@@ -164,3 +151,16 @@ To run the benchmark:
    ```bash
    bash -x run_energy_benchmark.sh path/of/sdf
    ```
+
+## Citation
+
+If you use this code in your research, please cite:
+
+```bibtex
+@article{zhang2025veda,
+  title={VEDA: 3D Molecular Generation via Variance-Exploding Diffusion with Annealing},
+  author={Zhang, Peining and Bi, Jinbo and Song, Minghu},
+  journal={arXiv preprint arXiv:2511.09568},
+  year={2025}
+}
+```
