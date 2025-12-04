@@ -23,7 +23,8 @@ from models.semla import EquiInvDynamics, SemlaGenerator
 from util.molrepr import GeometricMolBatch
 
 # Default script arguments
-DEFAULT_SAVE_FILE = "predictions.smol"
+DEFAULT_SAVE_DIR = "./outputs"
+DEFAULT_SAVE_FILE = "predictions"
 DEFAULT_DATASET_SPLIT = "train"
 DEFAULT_N_MOLECULES = 500
 DEFAULT_BATCH_COST = 8192
@@ -295,7 +296,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_path", type=str)
     parser.add_argument("--data_path", type=str)
     parser.add_argument("--dataset", type=str)
-    parser.add_argument("--save_dir", type=str)
+    parser.add_argument("--save_dir", type=str, default=DEFAULT_SAVE_DIR)
     parser.add_argument("--save_file", type=str, default=DEFAULT_SAVE_FILE)
     parser.add_argument("--save_per_mol_metrics", action="store_true")
 
@@ -322,4 +323,6 @@ if __name__ == "__main__":
                        help="Mixing factor for arcsin time schedule (merged from sampling_strategy_factor and rho)")
     parser.add_argument("--low_confidence_remask", type=str, default=DEFAULT_LOW_CONFIDENCE_REMASK)
     args = parser.parse_args()
+    # Set the default for no_novelty to True
+    parser.set_defaults(no_novelty=True)
     main(args)

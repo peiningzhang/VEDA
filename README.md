@@ -8,6 +8,9 @@ Compared to the MiDi baseline, VEDA adds residual preconditioning to better inte
 
 ## Repository status
 
+Pre-trained models and processed datasets are available at:
+- [Google Drive: Models and Data](https://drive.google.com/drive/folders/1-1jYJ1EKOUX6FA5NrcKUAcbSdB-1mhXu?usp=sharing)
+
 ## Installation
 
 This code was tested with PyTorch 2.0.1, CUDA 11.8, and torch_geometric 2.3.1 on multi-GPU machines.
@@ -50,7 +53,7 @@ This code was tested with PyTorch 2.0.1, CUDA 11.8, and torch_geometric 2.3.1 on
 We reuse MiDi’s preprocessing pipeline. Follow their instructions for downloading, preprocessing, and structuring the datasets (see [MiDi README](https://github.com/cvignac/MiDi/blob/master/README.md)). Processed files should live under the same hierarchy (e.g. `MiDi/data/geom/raw/`) so that our scripts locate them without changes.
 
 - QM9 should download automatically on first run.
-- For GEOM-DRUGS, place the raw pickles in `MiDi/data/geom/raw/`:
+- For GEOM-DRUGS, place the raw pickles in `./data/geom-drugs/smol/`:
   - Train: https://bits.csb.pitt.edu/files/geom_raw/train_data.pickle
   - Validation: https://bits.csb.pitt.edu/files/geom_raw/val_data.pickle
   - Test: https://bits.csb.pitt.edu/files/geom_raw/test_data.pickle
@@ -83,13 +86,7 @@ python evaluate.py \
   --data_path path/data/qm9/smol/ \
   --ckpt_path qm9/checkpoints/last.ckpt \
   --dataset qm9 \
-  --n_replicates 1 \
-  --integration_steps 100 \
-  --mask_rate_strategy log_uniform \
   --coord_noise_std_dev 0.4 \
-  --cat_sampling_noise_level 1 \
-  --sampler euler \
-  --sampling_scheduler_factor_rho 2.0 \
   --temperature 0.9 \
   --adaptive_cat_noise_level
 ```
@@ -109,3 +106,40 @@ python train.py \
 ```
 
 This configuration matches the GEOM-DRUGS runs described in the preprint and serves as the starting point for all ablations on that dataset.
+
+### Evaluation
+
+To evaluate a trained GEOM-DRUGS model:
+
+```bash
+python evaluate.py \
+  --data_path data/geom-drugs/smol/ \
+  --ckpt_path model/last.ckpt \
+  --dataset geom-drugs \
+  --coord_noise_std_dev 0.4 \
+  --sampling_scheduler_factor_rho 2.5 \
+  --mask_rate_strategy edm \
+  --adaptive_cat_noise_level
+```
+
+### GEOM-DRUG-revisited Benchmark
+
+For GEOM-DRUG-revisited Benchmark evaluation, see our parallelized implementation: [geom-drugs-3dgen-evaluation](https://github.com/peiningzhang/geom-drugs-3dgen-evaluation).
+
+To run the benchmark:
+1. First, generate molecules using `predict.py` with the same parameters as `evaluate.py`:
+   ```bash
+   python predict.py \
+     --data_path data/geom-drugs/smol/ \
+     --ckpt_path model/last.ckpt \
+     --dataset geom-drugs \
+     --coord_noise_std_dev 0.4 \
+     --sampling_scheduler_factor_rho 2.5 \
+     --mask_rate_strategy edm \
+     --adaptive_cat_noise_level
+   ```
+2. Then run the energy benchmark:
+   ```bash
+   bash -x run_energy_benchmark.sh path/of/sdf
+   ```
+```

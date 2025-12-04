@@ -1,4 +1,5 @@
 wandb/
 log/
 *.log
+outputs/*.sdf
 
