@@ -69,22 +69,20 @@ This code was tested with PyTorch 2.0.1, CUDA 11.8, and torch_geometric 2.3.1 on
 
 ## Running QM9 experiments
 
-For the QM9 "smol" setup discussed in the paper, we launch training with:
+For the QM9 setup of VEDA-S used in the paper, we launch training with:
 
 ```bash
 python train.py \
   --data_path data/qm9/smol/ \
   --dataset qm9 \
   --epochs 300 \
-  --mask_rate_strategy edm \
-  --optimal_transport None \
   --warm_up_steps 2000 \
   --bond_loss_weight 0.5 \
   --use_cat_time_based_weight \
   --x_pred_mode constant
 ```
 
-This command activates the EDM-style mask schedule, annealed VE noise, and categorical time-weighting described in [the VEDA paper](https://arxiv.org/abs/2511.09568), providing the configuration we use to report QM9 metrics. Adjust epochs, validation cadence, or transport settings as needed for GEOM-DRUGS or ablation studies.
+This command uses the configuration we report for QM9 metrics in [the VEDA paper](https://arxiv.org/abs/2511.09568).
 
 ### Evaluation
 
@@ -102,19 +100,17 @@ python evaluate.py \
 
 ## Running GEOM-DRUGS experiments
 
-For GEOM-DRUGS we keep the same EDM-inspired masking but shorten the validation cadence:
+For GEOM-DRUGS:
 
 ```bash
 python train.py \
   --data_path data/geom-drugs/smol/ \
   --dataset geom-drugs \
-  --mask_rate_strategy edm \
-  --optimal_transport None \
   --val_check_epochs 10 \
   --x_pred_mode adaptive
 ```
 
-This configuration matches the GEOM-DRUGS runs described in the preprint and serves as the starting point for all ablations on that dataset.
+This configuration matches the GEOM-DRUGS runs reported in the paper.
 
 ### Evaluation
 
