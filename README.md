@@ -6,10 +6,42 @@ This repository contains the reference implementation of **VEDA: 3D Molecular Ge
 
 Compared to the MiDi baseline, VEDA adds residual preconditioning to better interface coordinate-predicting networks with diffusion objectives, achieving state-of-the-art valency stability and a median relaxation energy drop of 1.72 kcal/mol on GEOM-DRUGS while keeping sampling to 100 steps, as reported in the paper.
 
-## Repository status
+## Models and Datasets
 
-Pre-trained models and processed datasets are available at:
+You can either download pre-trained models and processed datasets directly from:
 - [Google Drive: Models and Data](https://drive.google.com/drive/folders/1-1jYJ1EKOUX6FA5NrcKUAcbSdB-1mhXu?usp=sharing)
+
+Or process the datasets yourself:
+
+### QM9
+
+We copied the code from [MiDi](https://github.com/cvignac/MiDi) to download the QM9 dataset and create the data splits. We provide the code to do this, as well as create the Smol internal dataset representation used for training in the `notebooks/qm9.ipynb` notebook.
+
+### GEOM-DRUGS
+
+For GEOM-DRUGS we also follow the URLs provided in the MiDi repo. GEOM-DRUGS is preprocessed using the `preprocess.py` script. GEOM-DRUGS URLs from MiDi are as follows:
+
+- Train: https://drive.switch.ch/index.php/s/UauSNgSMUPQdZ9v
+- Validation: https://drive.switch.ch/index.php/s/YNW5UriYEeVCDnL
+- Test: https://drive.switch.ch/index.php/s/GQW9ok7mPInPcIo
+
+After downloading the raw pickle files, place them in a `raw` folder and run:
+```bash
+python preprocess.py --data_path path/to/geom-drugs --raw_data_folder raw --save_data_folder smol
+```
+
+## Citation
+
+If you use this code in your research, please cite:
+
+```bibtex
+@article{zhang2025veda,
+  title={VEDA: 3D Molecular Generation via Variance-Exploding Diffusion with Annealing},
+  author={Zhang, Peining and Bi, Jinbo and Song, Minghu},
+  journal={arXiv preprint arXiv:2511.09568},
+  year={2025}
+}
+```
 
 ## Installation
 
@@ -47,16 +79,6 @@ This code was tested with PyTorch 2.0.1, CUDA 11.8, and torch_geometric 2.3.1 on
   pip install -r requirements.txt
   pip install -e .
   ```
-
-## Datasets
-
-We reuse MiDi’s preprocessing pipeline. Follow their instructions for downloading, preprocessing, and structuring the datasets (see [MiDi README](https://github.com/cvignac/MiDi/blob/master/README.md)). Processed files should live under the same hierarchy (e.g. `MiDi/data/geom/raw/`) so that our scripts locate them without changes.
-
-- QM9 should download automatically on first run.
-- For GEOM-DRUGS, place the raw pickles in `./data/geom-drugs/smol/`:
-  - Train: https://bits.csb.pitt.edu/files/geom_raw/train_data.pickle
-  - Validation: https://bits.csb.pitt.edu/files/geom_raw/val_data.pickle
-  - Test: https://bits.csb.pitt.edu/files/geom_raw/test_data.pickle
 
 ## Running QM9 experiments
 
@@ -142,4 +164,3 @@ To run the benchmark:
    ```bash
    bash -x run_energy_benchmark.sh path/of/sdf
    ```
-```
