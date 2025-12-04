@@ -144,8 +144,9 @@ To run the benchmark:
      --adaptive_cat_noise_level
    ```
    Note: `--save_dir` (default: `./outputs`) and `--save_file` (default: `predictions`) specify where to save the generated molecules. The output will be saved as `{save_dir}/{save_file}.sdf`.
-2. Then run the energy benchmark:
+2. Then run the energy benchmark under the directory of `geom-drugs-3dgen-evaluation`:
    ```bash
+   cd geom-drugs-3dgen-evaluation
    bash -x run_energy_benchmark.sh path/of/sdf
    ```
 
