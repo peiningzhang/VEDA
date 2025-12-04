@@ -143,6 +143,7 @@ To run the benchmark:
      --mask_rate_strategy edm \
      --adaptive_cat_noise_level
    ```
+   Note: `--save_dir` (default: `./outputs`) and `--save_file` (default: `predictions`) specify where to save the generated molecules. The output will be saved as `{save_dir}/{save_file}.sdf`.
 2. Then run the energy benchmark:
    ```bash
    bash -x run_energy_benchmark.sh path/of/sdf
