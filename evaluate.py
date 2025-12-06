@@ -27,7 +27,6 @@ DEFAULT_MAX_SIGMA = 80
 DEFAULT_MIN_SIGMA = 0.001
 # DEFAULT_MASK_TIMES_FACTOR removed - parameter no longer used
 DEFAULT_MASK_RATE_STRATEGY = 'log_uniform'
-DEFAULT_INCLUDE_CHARGE=True
 DEFAULT_SAMPLING_SCHEDULER_FACTOR_RHO = 2.0
 DEFAULT_SAMPLER = "euler"
 DEFAULT_LOW_CONFIDENCE_REMASK = None
@@ -275,8 +274,6 @@ if __name__ == "__main__":
     parser.add_argument("--bucket_cost_scale", type=str, default=DEFAULT_BUCKET_COST_SCALE)
     parser.add_argument("--max_sigma", type=float, default=DEFAULT_MAX_SIGMA)
     parser.add_argument("--min_sigma", type=float, default=DEFAULT_MIN_SIGMA)
-    # Allow overridding for EGNN arch since some models were not saved with a value for n_layers
-    parser.add_argument("--n_layers", type=int, default=None)
     # --mask_times_factor removed - parameter no longer used
     parser.add_argument("--mask_rate_strategy", type=str, default=DEFAULT_MASK_RATE_STRATEGY)
     parser.add_argument("--adaptive_cat_noise_level", action="store_true")

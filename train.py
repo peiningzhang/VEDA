@@ -208,13 +208,6 @@ def build_dm(args, vocab):
     n_bond_types = util.get_n_bond_types(args.categorical_strategy)
     transform = partial(util.mol_transform, vocab=vocab, n_bonds=n_bond_types, coord_std=coord_std)
 
-    # Load generated dataset with different transform fn if we are distilling a model
-    # if args.distill:
-    #     distill_transform = partial(util.distill_transform, coord_std=coord_std)
-    #     train_dataset = GeometricDataset.load(data_path / "distill.smol", transform=distill_transform)
-    # else:
-    #     train_dataset = GeometricDataset.load(data_path / "train.smol", transform=transform)
-
     train_dataset = GeometricDataset.load(data_path / "train.smol", transform=transform, test_run=args.test_run)
     val_dataset = GeometricDataset.load(data_path / "val.smol", transform=transform, test_run=args.test_run)
     val_dataset = val_dataset.sample(args.n_validation_mols)
@@ -259,7 +252,6 @@ def build_dm(args, vocab):
             + "Acceted values: `batch`, `equivariant` and `scale`."
         )
 
-    # train_fixed_time = 0.5 if args.distill else None
     train_fixed_time = None
 
     prior_sampler = GeometricNoiseSampler(
@@ -374,12 +366,6 @@ def main(args):
     model = build_model(args, dm, vocab)
     print("Model complete.")
 
-    # if args.ckpt_path is not None:
-    #     from evaluate import load_model
-    #     print(f"Loading model...")
-    #     model = load_model(args, vocab, dm)
-    #     print("Model complete.")
-
     trainer = build_trainer(args)
 
     print("Fitting datamodule to model...")
@@ -461,9 +447,6 @@ if __name__ == "__main__":
         trial_run=False,
         use_ema=True,
         self_condition=True,
-        # compile_model=False,
-        # mixed_precision=False,
-        # distill=False
     )
 
     args = parser.parse_args()
