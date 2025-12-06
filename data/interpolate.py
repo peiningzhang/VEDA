@@ -213,8 +213,8 @@ class GeometricInterpolant(Interpolant):
         type_dist_temp: float = 1.0,
         equivariant_ot: bool = False,
         batch_ot: bool = False,
-        time_mean: float = -0.8,
-        time_sigma: float = 1.2,
+        time_mean: float = -1.26,
+        time_sigma: float = 1.41,
         fixed_time: Optional[float] = None,
         # Note: mask_times_factor parameter removed - was used to scale time for mask rate calculation
         # but is no longer needed. Mask rate is now computed directly from time without scaling.

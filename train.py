@@ -56,8 +56,6 @@ DEFAULT_TYPE_DIST_TEMP = 1.0
 DEFAULT_MASK_RATE_STRATEGY = "edm"
 # DEFAULT_TIME_ALPHA = 2.0
 # DEFAULT_TIME_BETA = 1.0
-DEFAULT_TIME_MEAN = -1.26
-DEFAULT_TIME_SIGMA = 1.41
 DEFAULT_OPTIMAL_TRANSPORT = None
 DEFAULT_MAX_SIGMA = 80
 DEFAULT_MIN_SIGMA = 0.001
@@ -274,8 +272,8 @@ def build_dm(args, vocab):
         type_dist_temp=args.type_dist_temp,
         equivariant_ot=equivariant_ot,
         batch_ot=batch_ot,
-        time_mean=args.time_mean,
-        time_sigma=args.time_sigma,
+        time_mean=util.TIME_MEAN,
+        time_sigma=util.TIME_SIGMA,
         fixed_time=train_fixed_time,
         # mask_times_factor removed - see GeometricInterpolant class for details
         mask_rate_strategy = args.mask_rate_strategy,
@@ -435,8 +433,6 @@ if __name__ == "__main__":
 
     # parser.add_argument("--time_alpha", type=float, default=DEFAULT_TIME_ALPHA)
     # parser.add_argument("--time_beta", type=float, default=DEFAULT_TIME_BETA)
-    parser.add_argument("--time_mean", type=float, default=DEFAULT_TIME_MEAN)
-    parser.add_argument("--time_sigma", type=float, default=DEFAULT_TIME_SIGMA)
     parser.add_argument("--optimal_transport", type=str, default=DEFAULT_OPTIMAL_TRANSPORT)
     parser.add_argument("--max_sigma", type=float, default=DEFAULT_MAX_SIGMA)
     parser.add_argument("--min_sigma", type=float, default=DEFAULT_MIN_SIGMA)

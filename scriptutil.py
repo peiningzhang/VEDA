@@ -28,6 +28,10 @@ PROJECT_PREFIX = "equinv"
 BOND_MASK_INDEX = 5
 COMPILER_CACHE_SIZE = 128
 
+# Time distribution parameters for geometric interpolant
+TIME_MEAN = -1.26
+TIME_SIGMA = 1.41
+
 
 def disable_lib_stdout():
     pybel.ob.obErrorLog.StopLogging()
