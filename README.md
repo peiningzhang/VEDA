@@ -123,7 +123,6 @@ python evaluate.py \
   --dataset geom-drugs \
   --coord_noise_std_dev 0.4 \
   --sampling_scheduler_factor_rho 2.5 \
-  --mask_rate_strategy edm \
   --adaptive_cat_noise_level
 ```
 
@@ -140,7 +139,6 @@ To run the benchmark:
      --dataset geom-drugs \
      --coord_noise_std_dev 0.4 \
      --sampling_scheduler_factor_rho 2.5 \
-     --mask_rate_strategy edm \
      --adaptive_cat_noise_level
    ```
    Note: `--save_dir` (default: `./outputs`) and `--save_file` (default: `predictions`) specify where to save the generated molecules. The output will be saved as `{save_dir}/{save_file}.sdf`.

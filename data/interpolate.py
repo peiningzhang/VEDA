@@ -362,14 +362,12 @@ class GeometricInterpolant(Interpolant):
         # Note: mask_times_factor scaling removed - time is used directly without scaling
         if self.type_interpolation == "unmask":
             if self.mask_rate_strategy == 'edm':
-                # Note: In training, 'edm' uses log_uniform formula (inconsistent with sampling)
-                # This should probably be unified with the sampling strategy
-                mask_rate = (np.log(t) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
-            else:
                 # DFM mask rate formula: mask_rate = t/(t+1) = 1 - 1/(1+t)
-                # Derived from DFM mask prior: mask_rate = w_noise/(w_data + w_noise) = t/(1+t)
-                # where t = w_noise/w_data is the weight ratio
+                # This should probably be unified with the sampling strategy
                 mask_rate = 1 - 1/(1+t)
+            else:
+                # DFM mask rate formula: mask_rate LOGNORMAL
+                mask_rate = (np.log(t) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
             atom_mask = torch.rand(from_mol.seq_length) < mask_rate
             to_atomics = torch.argmax(to_mol.atomics, dim=-1)
             from_atomics = torch.argmax(from_mol.atomics, dim=-1)
@@ -380,14 +378,13 @@ class GeometricInterpolant(Interpolant):
         if self.bond_interpolation == "unmask":
             to_adj = torch.argmax(to_mol.adjacency, dim=-1)
             from_adj = torch.argmax(from_mol.adjacency, dim=-1)
-            if self.mask_rate_strategy == 'edm':
-                # Note: In training, 'edm' uses log_uniform formula (inconsistent with sampling)
+            if self.mask_rate_strategy == 'edm':    
+                # Note: In training, 'edm' uses formula: mask_rate = 1 - 1/(1+t)
                 # This should probably be unified with the sampling strategy
-                mask_rate = (np.log(t) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
+                mask_rate = 1 - 1/(1+t)
             else:
                 # DFM mask rate formula: mask_rate = t/(t+1) = 1 - 1/(1+t)
-                # Derived from DFM mask prior: mask_rate = w_noise/(w_data + w_noise) = t/(1+t)
-                mask_rate = 1 - 1/(1+t)
+                mask_rate = (np.log(t) - (self.time_mean - self.time_sigma*4))/(self.time_sigma*8)
             bond_mask = torch.rand_like(from_adj.float()) < mask_rate
             to_adj[bond_mask] = from_adj[bond_mask]
             interp_adj = smolF.one_hot_encode_tensor(to_adj, to_mol.adjacency.size(-1))
