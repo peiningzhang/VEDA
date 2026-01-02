@@ -106,6 +106,12 @@ def load_model(args, vocab, dm):
     hparams.pop("sampling_scheduler_factor_rho", None)
     hparams.pop("low_confidence_remask", None)
     
+    # Get use_step_size_sampling: use command line argument if explicitly set, otherwise from checkpoint hparams
+    if hasattr(args, 'use_step_size_sampling') and args.use_step_size_sampling is not None:
+        use_step_size_sampling = args.use_step_size_sampling
+    else:
+        use_step_size_sampling = hparams.get("use_step_size_sampling", True)
+    
     fm_model = MolecularCFM.load_from_checkpoint(
         args.ckpt_path,
         gen=egnn_gen,
@@ -115,6 +121,7 @@ def load_model(args, vocab, dm):
         bond_mask_index=bond_mask_index,
         sampling_scheduler_factor_rho=args.sampling_scheduler_factor_rho,
         low_confidence_remask=args.low_confidence_remask,
+        use_step_size_sampling=use_step_size_sampling,
         **hparams,
     )
     return fm_model
@@ -318,6 +325,8 @@ if __name__ == "__main__":
     parser.add_argument("--sampling_scheduler_factor_rho", type=float, default=DEFAULT_SAMPLING_SCHEDULER_FACTOR_RHO,
                        help="Mixing factor for arcsin time schedule (merged from sampling_strategy_factor and rho)")
     parser.add_argument("--low_confidence_remask", type=str, default=DEFAULT_LOW_CONFIDENCE_REMASK)
+    parser.add_argument("--use_step_size_sampling", action="store_true", default=None, help="Use step size during sampling/inference (default: from checkpoint, or True if not in checkpoint)")
+    parser.add_argument("--no_use_step_size_sampling", action="store_false", dest="use_step_size_sampling", help="Disable step size during sampling/inference")
     args = parser.parse_args()
     # Set the default for no_novelty to True
     parser.set_defaults(no_novelty=True)
